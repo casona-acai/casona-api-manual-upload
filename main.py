@@ -1,4 +1,4 @@
-# main.py (VERSÃO FINAL - LIFESPAN E INJEÇÃO DE DEPENDÊNCIA)
+# main.py (VERSÃO FINAL - CORREÇÃO NO ENDPOINT DE HISTÓRICO)
 
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +8,6 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from apscheduler.schedulers.background import BackgroundScheduler
-import atexit
 import logging
 
 import auth
@@ -22,35 +21,23 @@ logger = logging.getLogger(__name__)
 
 
 # --- GERENCIADOR DE CICLO DE VIDA (LIFESPAN) ---
-# Esta função gerencia o que acontece quando a API inicia e desliga.
-# É a solução correta para pools de conexão e Gunicorn.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # CÓDIGO EXECUTADO NA INICIALIZAÇÃO (DENTRO DE CADA WORKER DO GUNICORN)
     logger.info("Iniciando a aplicação...")
-
-    # 1. Cria a instância do DataManager aqui.
     data_manager_instance = DataManager()
-
-    # 2. Injeta a instância no módulo de autenticação.
     auth.set_data_manager(data_manager_instance)
-
-    # 3. Armazena a instância no estado da aplicação para ser acessada pelos endpoints.
     app.state.data_manager = data_manager_instance
 
-    # Adiciona as tarefas ao scheduler
     scheduler.add_job(data_manager_instance.enviar_emails_aniversariantes_do_dia, 'cron', hour=8, minute=0,
                       id="job_aniversariantes")
     scheduler.add_job(data_manager_instance.enviar_emails_clientes_inativos, 'cron', hour=11, minute=0,
                       id="job_clientes_inativos")
 
-    # Inicia o agendador de tarefas
     scheduler.start()
     logger.info("Agendador de tarefas iniciado.")
 
-    yield  # A aplicação fica rodando aqui.
+    yield
 
-    # CÓDIGO EXECUTADO NO ENCERRAMENTO
     logger.info("Encerrando a aplicação...")
     if scheduler.running:
         scheduler.shutdown()
@@ -59,10 +46,10 @@ async def lifespan(app: FastAPI):
 
 
 # --- CRIAÇÃO DA APLICAÇÃO FASTAPI COM O LIFESPAN ---
-app = FastAPI(title="Casona Fidelidade API", version="4.0.0-lifespan", lifespan=lifespan)
+app = FastAPI(title="Casona Fidelidade API", version="4.0.1-hotfix", lifespan=lifespan)
 
 
-# --- DEPENDÊNCIA PARA OBTER O DATA MANAGER NOS ENDPOINTS ---
+# --- DEPENDÊNCIA PARA OBTER O DATA MANAGER ---
 def get_data_manager(request: Request) -> DataManager:
     return request.app.state.data_manager
 
@@ -181,10 +168,19 @@ def adicionar_compra(compra_data: models.CompraPayload, current_store: dict = De
 def obter_historico(codigo: str, current_store: dict = Depends(auth.get_current_store),
                     dm: DataManager = Depends(get_data_manager)):
     try:
+        # <<< AQUI ESTÁ A CORREÇÃO >>>
+        # A função obter_historico_ciclo_atual já faz todo o trabalho de montar o dicionário.
         historico_data = dm.obter_historico_ciclo_atual(codigo)
-        if not historico_data: raise HTTPException(status_code=404, detail="Cliente não encontrado.")
+
+        if not historico_data:
+            raise HTTPException(status_code=404, detail="Cliente não encontrado.")
+
+        # Retorna o dicionário completo, que já contém as chaves 'historico' e 'premios_ativos'.
         return historico_data
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        logger.error(f"Erro ao obter histórico para o código {codigo}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
