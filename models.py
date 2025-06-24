@@ -62,6 +62,7 @@ class ClienteResponse(BaseModel):
     contagem_brinde: int
     loja_origem: str
     data_nascimento: Optional[date] = None
+    ano_ultimo_email_aniversario: Optional[int] = None
     sexo: Optional[str] = None
 
     class Config:
