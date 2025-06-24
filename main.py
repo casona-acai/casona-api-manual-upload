@@ -79,6 +79,26 @@ scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
 
 # --- ENDPOINTS ---
 
+@app.get("/debug-historico/{codigo}", tags=["Debug"])
+def debug_obter_historico(
+    codigo: str,
+    current_store: dict = Depends(auth.get_current_store),
+    dm: DataManager = Depends(get_data_manager)
+):
+    """
+    Endpoint temporário para depurar a saída do histórico.
+    """
+    logger.info(f"DEBUG: Acessando endpoint de debug para o código {codigo}")
+    try:
+        historico_data = dm.obter_historico_ciclo_atual(codigo)
+        if not historico_data:
+            raise HTTPException(status_code=404, detail="Cliente não encontrado no debug.")
+        logger.info(f"DEBUG: Dados retornados: {historico_data}")
+        return historico_data
+    except Exception as e:
+        logger.error(f"DEBUG: Erro no endpoint de debug: {e}")
+        raise
+
 @app.post("/token", summary="Autentica a loja e retorna um token de acesso", response_model=models.Token)
 @limiter.limit("5/minute")
 def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
