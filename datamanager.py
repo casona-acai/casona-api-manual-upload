@@ -1,4 +1,4 @@
-# datamanager.py
+# datamanager.py (VERSÃO CORRIGIDA)
 
 import psycopg2
 from psycopg2 import OperationalError, IntegrityError, extras
@@ -375,10 +375,20 @@ class DataManager:
             with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
                 cursor.execute("SELECT * FROM clientes ORDER BY nome")
                 clientes = cursor.fetchall()
+
                 cursor.execute("SELECT * FROM compras")
                 compras = cursor.fetchall()
-                cursor.execute("SELECT * FROM premios_resgatados")
+
+                # <<< ALTERAÇÃO AQUI >>>
+                # Corrigimos a consulta para usar um ALIAS (AS) e renomear a coluna 'valor_resgatado'
+                # para 'valor_premio', que é o nome que o modelo Pydantic do dashboard espera.
+                cursor.execute("""
+                    SELECT id, codigo_premio, valor_resgatado AS valor_premio, codigo_cliente,
+                           data_geracao, data_resgate, loja_resgate
+                    FROM premios_resgatados
+                """)
                 premios_resgatados = cursor.fetchall()
+
             return {"clientes": clientes, "compras": compras, "premios_resgatados": premios_resgatados}
         finally:
             if conn: self._release_conexao(conn)
