@@ -24,7 +24,7 @@ LOJAS_INICIAIS = [
     {
         "username": "admin",
         "senha": "admin",
-        "identificador": "TESTE-01",
+        "identificador": "ADMIN",
         "nome_loja": "Loja de Teste"
     },
     # Para adicionar mais lojas no futuro, siga este modelo:

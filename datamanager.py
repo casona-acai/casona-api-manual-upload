@@ -322,3 +322,54 @@ class DataManager:
             """
             rows = self._executar_query(query, fetch='all')
             return [row[0] for row in rows] if rows else []
+
+    def get_all_dashboard_data(self):
+        """Busca todos os dados necessários para o dashboard de uma só vez."""
+        conn = self._get_conexao()
+        try:
+            with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
+                self.logger.info("DASHBOARD: Buscando todos os clientes...")
+                cursor.execute("SELECT * FROM clientes ORDER BY nome")
+                clientes = cursor.fetchall()
+
+                self.logger.info("DASHBOARD: Buscando todas as compras...")
+                cursor.execute("SELECT * FROM compras")
+                compras = cursor.fetchall()
+
+                self.logger.info("DASHBOARD: Buscando todos os prêmios resgatados...")
+                cursor.execute("SELECT * FROM premios_resgatados")
+                premios_resgatados = cursor.fetchall()
+
+            self.logger.info("DASHBOARD: Dados coletados com sucesso.")
+            return {
+                "clientes": clientes,
+                "compras": compras,
+                "premios_resgatados": premios_resgatados
+            }
+        except Exception as e:
+            self.logger.error(f"DASHBOARD: Erro ao buscar dados agregados: {e}")
+            raise  # Lança o erro para a camada da API tratar
+        finally:
+            if conn:
+                self._release_conexao(conn)
+
+    def get_all_lojas_from_db(self):
+        """Busca uma lista de todas as lojas únicas no sistema."""
+        query = """
+            SELECT DISTINCT loja FROM (
+                SELECT loja_origem as loja FROM clientes WHERE loja_origem IS NOT NULL AND loja_origem != ''
+                UNION
+                SELECT loja_compra as loja FROM compras WHERE loja_compra IS NOT NULL AND loja_compra != ''
+                UNION
+                SELECT loja_resgate as loja FROM premios_resgatados WHERE loja_resgate IS NOT NULL AND loja_resgate != ''
+            ) as lojas_unicas WHERE loja IS NOT NULL ORDER BY loja;
+        """
+        try:
+            self.logger.info("DASHBOARD: Buscando lista de lojas...")
+            rows = self._executar_query(query, fetch='all')
+            lojas = [row[0] for row in rows] if rows else []
+            self.logger.info(f"DASHBOARD: Lojas encontradas: {lojas}")
+            return lojas
+        except Exception as e:
+            self.logger.error(f"DASHBOARD: Erro ao buscar lista de lojas: {e}")
+            raise
