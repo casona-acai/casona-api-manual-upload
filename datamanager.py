@@ -134,7 +134,6 @@ class DataManager:
 
     def _calcular_pontos_validos(self, codigo_cliente: str, cursor) -> int:
         data_limite = datetime.now() - timedelta(days=180)
-        # Calcula pontos apenas de compras não usadas em prêmios
         query = "SELECT COALESCE(SUM(pontos_gerados), 0) as total_pontos FROM compras WHERE codigo_cliente = %s AND data >= %s AND usada_em_premio = FALSE"
         cursor.execute(query, (codigo_cliente, data_limite))
         resultado = cursor.fetchone()

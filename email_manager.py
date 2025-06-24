@@ -78,12 +78,14 @@ class EmailManager:
                 Continue comprando para acumular ainda mais pontos no seu prêmio!
             </p>
             """
-        elif compras_no_ciclo >= 5:
-            mensagem_status = """
+        elif compras_no_ciclo >= 5 and codigo_premio_ativo:
+            mensagem_status = f"""
             <p>
-                Você adicionou mais pontos ao seu prêmio ativo! 
-                Lembre-se que você <strong>já pode resgatá-lo quando quiser.</strong>
+                Você adicionou mais pontos ao seu prêmio! Lembre-se que você <strong>já pode resgatá-lo quando quiser.</strong>
             </p>
+            <div style="background-color: #e0e0e0; border-left: 5px solid #8B008B; padding: 10px; margin: 15px 0;">
+                <p style="margin: 0; font-weight: bold;">Seu código de prêmio ativo é: {codigo_premio_ativo}</p>
+            </div>
             """
         else:
             faltam = 5 - compras_no_ciclo
