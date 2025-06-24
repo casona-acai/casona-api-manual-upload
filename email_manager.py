@@ -58,12 +58,13 @@ class EmailManager:
         """
         subject = "Atualização do seu Clube Fidelidade Casona Açaí!"
 
+        # Extrai as informações do dicionário
+        pontos_nesta_compra = resultado_compra.get("pontos_nesta_compra", 0)
         compras_no_ciclo = resultado_compra.get("compras_no_ciclo", 0)
         pontos_acumulados = resultado_compra.get("pontos_acumulados", 0)
         premio_gerado_agora = resultado_compra.get("premio_gerado_nesta_compra", False)
 
         mensagem_status = ""
-
         if premio_gerado_agora:
             mensagem_status = """
             <p style="font-size: 18px; color: #8B008B; font-weight: bold;">
@@ -90,6 +91,7 @@ class EmailManager:
             </p>
             """
 
+        # Template HTML atualizado para mostrar os pontos da compra e o saldo total
         html_body = f"""
         <html>
         <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
@@ -98,8 +100,13 @@ class EmailManager:
                 <p>Obrigado por sua compra! Seu extrato de pontos foi atualizado.</p>
 
                 <div style="background-color: #f2f2f2; padding: 15px; border-radius: 8px; text-align: center; margin: 20px 0;">
-                    <p style="font-size: 16px; margin: 0;">Seu saldo atual é de</p>
-                    <p style="font-size: 28px; font-weight: bold; color: #8B008B; margin: 10px 0;">
+                    <p style="font-size: 16px; margin: 0 0 5px 0;">Pontos desta compra:</p>
+                    <p style="font-size: 24px; font-weight: bold; color: #4CAF50; margin: 0 0 15px 0;">
+                        + {pontos_nesta_compra}
+                    </p>
+                    <hr style="border: none; border-top: 1px solid #ddd;">
+                    <p style="font-size: 16px; margin: 15px 0 5px 0;">Seu novo saldo total:</p>
+                    <p style="font-size: 28px; font-weight: bold; color: #8B008B; margin: 0;">
                         {pontos_acumulados} pontos
                     </p>
                 </div>

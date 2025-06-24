@@ -68,14 +68,10 @@ class DataManager:
             if conn:
                 self._release_conexao(conn)
 
-    # =========================================================================
-    # FUNÇÃO MODIFICADA
-    # =========================================================================
     def _iniciar_banco_de_dados(self):
         comandos_migracao = [
             '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS pontos_acumulados INTEGER NOT NULL DEFAULT 0;''',
             '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS compras_ciclo_atual INTEGER NOT NULL DEFAULT 0;''',
-            # >> LINHA ADICIONADA PARA CORRIGIR O ERRO <<
             '''ALTER TABLE compras ADD COLUMN IF NOT EXISTS pontos_gerados INTEGER NOT NULL DEFAULT 0;''',
             '''ALTER TABLE clientes DROP COLUMN IF EXISTS contagem_brinde;''',
             '''DROP TABLE IF EXISTS premios_ativos;''',
@@ -185,7 +181,6 @@ class DataManager:
         conn = self._get_conexao()
         try:
             with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
-                # Pede ao banco para retornar 0 se o valor for NULL, usando COALESCE
                 cursor.execute(
                     "SELECT nome, email, COALESCE(total_compras, 0) as total_compras, COALESCE(compras_ciclo_atual, 0) as compras_ciclo_atual FROM clientes WHERE codigo = %s FOR UPDATE",
                     (codigo,))
@@ -227,7 +222,9 @@ class DataManager:
 
             conn.commit()
 
+            # Adicionamos os pontos gerados nesta compra ao resultado que será enviado por e-mail
             resultado_compra = {
+                "pontos_nesta_compra": pontos_gerados,
                 "compras_no_ciclo": compras_ciclo_atual_novo,
                 "pontos_acumulados": pontos_totais_validos,
                 "codigo_premio_ativo": codigo_premio_ativo,
