@@ -1,4 +1,4 @@
-# datamanager.py (VERSÃO CORRIGIDA)
+# datamanager.py (VERSÃO FINAL E CORRIGIDA)
 
 import psycopg2
 from psycopg2 import OperationalError, IntegrityError, extras
@@ -13,10 +13,6 @@ import config
 
 
 class DataManager:
-    # ... (todo o resto do seu DataManager permanece igual) ...
-    # Cole todo o seu código aqui, exceto a função get_all_dashboard_data
-    # que está reescrita abaixo.
-
     def __init__(self, run_init=True):
         self.logger = logging.getLogger(__name__)
         self.email_manager = email_manager.EmailManager()
@@ -377,9 +373,6 @@ class DataManager:
         conn = self._get_conexao()
         try:
             with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
-                # <<< ALTERAÇÃO 1: Consulta de Clientes >>>
-                # Selecionamos explicitamente as colunas para garantir que correspondem
-                # ao modelo ClienteResponse em models.py.
                 cursor.execute("""
                     SELECT 
                         codigo, nome, telefone, email, cep, total_compras, total_gasto,
@@ -390,20 +383,18 @@ class DataManager:
                 """)
                 clientes = cursor.fetchall()
 
-                # <<< ALTERAÇÃO 2: Consulta de Compras >>>
-                # Convertemos o campo 'data' (que é um TIMESTAMP) para DATE,
-                # para corresponder ao tipo esperado pelo modelo CompraDashboard.
                 cursor.execute("""
                     SELECT id, codigo_cliente, numero_compra_geral, valor, data::date, loja_compra
                     FROM compras
                 """)
                 compras = cursor.fetchall()
 
-                # <<< ALTERAÇÃO 3: Consulta de Prêmios (Mantendo a correção anterior) >>>
-                # Usamos um alias para renomear 'valor_resgatado' para 'valor_premio'.
+                # <<< ALTERAÇÃO FINAL AQUI >>>
+                # Adicionado ::date aos campos de data para garantir o formato correto.
                 cursor.execute("""
-                    SELECT id, codigo_premio, valor_resgatado AS valor_premio, codigo_cliente,
-                           data_geracao, data_resgate, loja_resgate
+                    SELECT id, codigo_premio, valor_resgatado AS valor_premio, 
+                           pontos_resgatados, codigo_cliente,
+                           data_geracao::date, data_resgate::date, loja_resgate
                     FROM premios_resgatados
                 """)
                 premios_resgatados = cursor.fetchall()
