@@ -13,6 +13,10 @@ import config
 
 
 class DataManager:
+    # ... (todo o resto do seu DataManager permanece igual) ...
+    # Cole todo o seu código aqui, exceto a função get_all_dashboard_data
+    # que está reescrita abaixo.
+
     def __init__(self, run_init=True):
         self.logger = logging.getLogger(__name__)
         self.email_manager = email_manager.EmailManager()
@@ -373,15 +377,30 @@ class DataManager:
         conn = self._get_conexao()
         try:
             with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
-                cursor.execute("SELECT * FROM clientes ORDER BY nome")
+                # <<< ALTERAÇÃO 1: Consulta de Clientes >>>
+                # Selecionamos explicitamente as colunas para garantir que correspondem
+                # ao modelo ClienteResponse em models.py.
+                cursor.execute("""
+                    SELECT 
+                        codigo, nome, telefone, email, cep, total_compras, total_gasto,
+                        compras_ciclo_atual, loja_origem, data_nascimento,
+                        ano_ultimo_email_aniversario, sexo
+                    FROM clientes 
+                    ORDER BY nome
+                """)
                 clientes = cursor.fetchall()
 
-                cursor.execute("SELECT * FROM compras")
+                # <<< ALTERAÇÃO 2: Consulta de Compras >>>
+                # Convertemos o campo 'data' (que é um TIMESTAMP) para DATE,
+                # para corresponder ao tipo esperado pelo modelo CompraDashboard.
+                cursor.execute("""
+                    SELECT id, codigo_cliente, numero_compra_geral, valor, data::date, loja_compra
+                    FROM compras
+                """)
                 compras = cursor.fetchall()
 
-                # <<< ALTERAÇÃO AQUI >>>
-                # Corrigimos a consulta para usar um ALIAS (AS) e renomear a coluna 'valor_resgatado'
-                # para 'valor_premio', que é o nome que o modelo Pydantic do dashboard espera.
+                # <<< ALTERAÇÃO 3: Consulta de Prêmios (Mantendo a correção anterior) >>>
+                # Usamos um alias para renomear 'valor_resgatado' para 'valor_premio'.
                 cursor.execute("""
                     SELECT id, codigo_premio, valor_resgatado AS valor_premio, codigo_cliente,
                            data_geracao, data_resgate, loja_resgate
