@@ -68,10 +68,15 @@ class DataManager:
             if conn:
                 self._release_conexao(conn)
 
+    # =========================================================================
+    # FUNÇÃO MODIFICADA
+    # =========================================================================
     def _iniciar_banco_de_dados(self):
         comandos_migracao = [
             '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS pontos_acumulados INTEGER NOT NULL DEFAULT 0;''',
             '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS compras_ciclo_atual INTEGER NOT NULL DEFAULT 0;''',
+            # >> LINHA ADICIONADA PARA CORRIGIR O ERRO <<
+            '''ALTER TABLE compras ADD COLUMN IF NOT EXISTS pontos_gerados INTEGER NOT NULL DEFAULT 0;''',
             '''ALTER TABLE clientes DROP COLUMN IF EXISTS contagem_brinde;''',
             '''DROP TABLE IF EXISTS premios_ativos;''',
             '''CREATE TABLE IF NOT EXISTS premios_ativos (
@@ -80,7 +85,7 @@ class DataManager:
                 pontos_premio INTEGER NOT NULL,
                 data_geracao DATE NOT NULL,
                 data_ultima_atualizacao DATE NOT NULL,
-                FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo)
+                FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo) ON DELETE CASCADE
             );''',
             '''DROP TABLE IF EXISTS premios_resgatados;''',
             '''CREATE TABLE IF NOT EXISTS premios_resgatados (
@@ -107,7 +112,7 @@ class DataManager:
             '''CREATE TABLE IF NOT EXISTS compras (
                 id SERIAL PRIMARY KEY, codigo_cliente TEXT NOT NULL, numero_compra_geral INTEGER NOT NULL,
                 valor REAL NOT NULL, pontos_gerados INTEGER NOT NULL, data DATE NOT NULL, loja_compra TEXT,
-                FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo)
+                FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo) ON DELETE CASCADE
             )''',
             "CREATE SEQUENCE IF NOT EXISTS codigo_cliente_seq START 1;",
             "CREATE EXTENSION IF NOT EXISTS pg_trgm;",
@@ -176,9 +181,6 @@ class DataManager:
         finally:
             if conn: self._release_conexao(conn)
 
-    # =========================================================================
-    # FUNÇÃO MODIFICADA
-    # =========================================================================
     def registrar_compra(self, codigo, valor, loja_compra):
         conn = self._get_conexao()
         try:
@@ -193,7 +195,6 @@ class DataManager:
                 pontos_gerados = int(valor * 100)
                 data_atual = datetime.now().date()
 
-                # Agora esta parte é segura, pois COALESCE garantiu que não teremos None
                 compras_ciclo_atual_novo = cliente_data['compras_ciclo_atual'] + 1
                 total_compras_geral = cliente_data['total_compras'] + 1
 
@@ -201,7 +202,6 @@ class DataManager:
                     "INSERT INTO compras (codigo_cliente, numero_compra_geral, valor, pontos_gerados, data, loja_compra) VALUES (%s, %s, %s, %s, %s, %s)",
                     (codigo, total_compras_geral, valor, pontos_gerados, data_atual, loja_compra))
 
-                # Ajuste na query de UPDATE para também usar COALESCE, garantindo consistência
                 cursor.execute(
                     "UPDATE clientes SET total_compras = COALESCE(total_compras, 0) + 1, total_gasto = COALESCE(total_gasto, 0.0) + %s, compras_ciclo_atual = %s WHERE codigo = %s",
                     (valor, compras_ciclo_atual_novo, codigo))
@@ -234,7 +234,7 @@ class DataManager:
                 "premio_gerado_nesta_compra": premio_gerado_agora
             }
 
-            if cliente_data.get('email'):  # Usar .get() para segurança
+            if cliente_data.get('email'):
                 threading.Thread(
                     target=self.email_manager.send_purchase_update_email,
                     args=(cliente_data['email'], cliente_data['nome'], resultado_compra),
@@ -248,10 +248,6 @@ class DataManager:
             raise Exception(f"Falha ao registrar compra: {e}")
         finally:
             if conn: self._release_conexao(conn)
-
-    # =========================================================================
-    # FIM DA FUNÇÃO MODIFICADA
-    # =========================================================================
 
     def obter_status_fidelidade(self, codigo):
         conn = self._get_conexao()
@@ -281,9 +277,7 @@ class DataManager:
                 "resumo_fidelidade": {
                     "pontos_acumulados": pontos_validos,
                     "compras_no_ciclo_atual": cliente_data.get('compras_ciclo_atual', 0),
-                    # Adicionado .get() por segurança
                     "habilitado_para_gerar_premio": cliente_data.get('compras_ciclo_atual', 0) >= 5,
-                    # Adicionado .get() por segurança
                     "premio_ativo": {
                         "codigo_premio": premio_ativo['codigo_premio'] if premio_ativo else None,
                         "pontos_premio": premio_ativo['pontos_premio'] if premio_ativo else 0,
@@ -356,12 +350,10 @@ class DataManager:
         return self._executar_query(query, (nome_capitalizado, telefone, email, data_nascimento, sexo, cep, codigo))
 
     def enviar_emails_aniversariantes_do_dia(self):
-        # Implementar a lógica aqui
         self.logger.info("(TAREFA AGENDADA) Verificando aniversariantes do dia...")
         pass
 
     def enviar_emails_clientes_inativos(self):
-        # Implementar a lógica aqui
         self.logger.info("(TAREFA AGENDADA) Verificando clientes inativos...")
         pass
 
