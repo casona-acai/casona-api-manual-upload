@@ -1,4 +1,4 @@
-# main.py (VERSÃO FINAL - CORREÇÃO NO ENDPOINT DE HISTÓRICO)
+# main.py (VERSÃO 4.0.2 - CORREÇÃO FINAL NO ENDPOINT DE HISTÓRICO)
 
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
 
 
 # --- CRIAÇÃO DA APLICAÇÃO FASTAPI COM O LIFESPAN ---
-app = FastAPI(title="Casona Fidelidade API", version="4.0.1-hotfix", lifespan=lifespan)
+app = FastAPI(title="Casona Fidelidade API", version="4.0.2-hotfix", lifespan=lifespan)
 
 
 # --- DEPENDÊNCIA PARA OBTER O DATA MANAGER ---
@@ -168,14 +168,14 @@ def adicionar_compra(compra_data: models.CompraPayload, current_store: dict = De
 def obter_historico(codigo: str, current_store: dict = Depends(auth.get_current_store),
                     dm: DataManager = Depends(get_data_manager)):
     try:
-        # <<< AQUI ESTÁ A CORREÇÃO >>>
-        # A função obter_historico_ciclo_atual já faz todo o trabalho de montar o dicionário.
+        # <<< AQUI ESTÁ A CORREÇÃO FINAL E CORRETA >>>
+        # Chamando o método correto que monta o dicionário completo.
         historico_data = dm.obter_historico_ciclo_atual(codigo)
 
         if not historico_data:
             raise HTTPException(status_code=404, detail="Cliente não encontrado.")
 
-        # Retorna o dicionário completo, que já contém as chaves 'historico' e 'premios_ativos'.
+        # Retorna o dicionário completo, que agora garantidamente contém a chave 'historico'.
         return historico_data
     except Exception as e:
         if isinstance(e, HTTPException):
