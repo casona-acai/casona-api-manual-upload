@@ -76,8 +76,10 @@ atexit.register(lambda: scheduler.shutdown())
 # --- ENDPOINTS DE AUTENTICAÇÃO E UTILITÁRIOS ---
 @app.post("/token", summary="Autentica a loja e retorna um token de acesso", response_model=models.Token)
 @limiter.limit("5/minute")
-def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    # A função `auth.authenticate_store` agora consulta o banco de dados automaticamente.
+def login_for_access_token(
+    request: Request,  # <<< ADICIONE ESTE PARÂMETRO AQUI
+    form_data: OAuth2PasswordRequestForm = Depends()
+):
     loja = auth.authenticate_store(form_data.username, form_data.password)
     if not loja:
         raise HTTPException(
