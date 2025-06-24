@@ -1,4 +1,4 @@
-# datamanager.py (VERSÃO MODIFICADA)
+# datamanager.py
 
 import psycopg2
 from psycopg2 import OperationalError, IntegrityError, extras
@@ -17,7 +17,6 @@ class DataManager:
     Classe que gerencia toda a lógica de banco de dados para o sistema de fidelidade por pontos.
     """
 
-    # Adicionamos o parâmetro 'run_init' com valor padrão True
     def __init__(self, run_init=True):
         self.logger = logging.getLogger(__name__)
         self.email_manager = email_manager.EmailManager()
@@ -34,14 +33,9 @@ class DataManager:
             self.logger.critical(f"Falha CRÍTICA ao criar o pool de conexões: {e}")
             raise
 
-        # A migração só será executada se 'run_init' for True.
-        # Por padrão, ao criar um `DataManager()`, ele tentará migrar.
-        # Mas podemos desabilitar isso com `DataManager(run_init=False)`.
         if run_init:
             self._iniciar_banco_de_dados()
 
-    # O resto do arquivo datamanager.py permanece EXATAMENTE O MESMO.
-    # ... (cole todo o restante do seu código de DataManager aqui) ...
     def _get_conexao(self):
         return self.connection_pool.getconn()
 
@@ -166,7 +160,7 @@ class DataManager:
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 cursor.execute(query, (
-                novo_codigo, nome_capitalizado, telefone, email, cep, loja_origem, data_nascimento, sexo))
+                    novo_codigo, nome_capitalizado, telefone, email, cep, loja_origem, data_nascimento, sexo))
             conn.commit()
 
             if email:
@@ -182,18 +176,24 @@ class DataManager:
         finally:
             if conn: self._release_conexao(conn)
 
+    # =========================================================================
+    # FUNÇÃO MODIFICADA
+    # =========================================================================
     def registrar_compra(self, codigo, valor, loja_compra):
         conn = self._get_conexao()
         try:
             with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
+                # Pede ao banco para retornar 0 se o valor for NULL, usando COALESCE
                 cursor.execute(
-                    "SELECT nome, email, total_compras, compras_ciclo_atual FROM clientes WHERE codigo = %s FOR UPDATE",
+                    "SELECT nome, email, COALESCE(total_compras, 0) as total_compras, COALESCE(compras_ciclo_atual, 0) as compras_ciclo_atual FROM clientes WHERE codigo = %s FOR UPDATE",
                     (codigo,))
                 cliente_data = cursor.fetchone()
                 if not cliente_data: return None
 
                 pontos_gerados = int(valor * 100)
                 data_atual = datetime.now().date()
+
+                # Agora esta parte é segura, pois COALESCE garantiu que não teremos None
                 compras_ciclo_atual_novo = cliente_data['compras_ciclo_atual'] + 1
                 total_compras_geral = cliente_data['total_compras'] + 1
 
@@ -201,8 +201,9 @@ class DataManager:
                     "INSERT INTO compras (codigo_cliente, numero_compra_geral, valor, pontos_gerados, data, loja_compra) VALUES (%s, %s, %s, %s, %s, %s)",
                     (codigo, total_compras_geral, valor, pontos_gerados, data_atual, loja_compra))
 
+                # Ajuste na query de UPDATE para também usar COALESCE, garantindo consistência
                 cursor.execute(
-                    "UPDATE clientes SET total_compras = total_compras + 1, total_gasto = total_gasto + %s, compras_ciclo_atual = %s WHERE codigo = %s",
+                    "UPDATE clientes SET total_compras = COALESCE(total_compras, 0) + 1, total_gasto = COALESCE(total_gasto, 0.0) + %s, compras_ciclo_atual = %s WHERE codigo = %s",
                     (valor, compras_ciclo_atual_novo, codigo))
 
                 pontos_totais_validos = self._calcular_pontos_validos(codigo, cursor)
@@ -233,7 +234,7 @@ class DataManager:
                 "premio_gerado_nesta_compra": premio_gerado_agora
             }
 
-            if cliente_data['email']:
+            if cliente_data.get('email'):  # Usar .get() para segurança
                 threading.Thread(
                     target=self.email_manager.send_purchase_update_email,
                     args=(cliente_data['email'], cliente_data['nome'], resultado_compra),
@@ -243,10 +244,14 @@ class DataManager:
             return resultado_compra
         except Exception as e:
             if conn: conn.rollback()
-            self.logger.error(f"Falha na transação de registrar compra para o código {codigo}: {e}")
+            self.logger.error(f"Falha na transação de registrar compra para o código {codigo}: {e}", exc_info=True)
             raise Exception(f"Falha ao registrar compra: {e}")
         finally:
             if conn: self._release_conexao(conn)
+
+    # =========================================================================
+    # FIM DA FUNÇÃO MODIFICADA
+    # =========================================================================
 
     def obter_status_fidelidade(self, codigo):
         conn = self._get_conexao()
@@ -275,8 +280,10 @@ class DataManager:
                 "cliente": cliente_data,
                 "resumo_fidelidade": {
                     "pontos_acumulados": pontos_validos,
-                    "compras_no_ciclo_atual": cliente_data['compras_ciclo_atual'],
-                    "habilitado_para_gerar_premio": cliente_data['compras_ciclo_atual'] >= 5,
+                    "compras_no_ciclo_atual": cliente_data.get('compras_ciclo_atual', 0),
+                    # Adicionado .get() por segurança
+                    "habilitado_para_gerar_premio": cliente_data.get('compras_ciclo_atual', 0) >= 5,
+                    # Adicionado .get() por segurança
                     "premio_ativo": {
                         "codigo_premio": premio_ativo['codigo_premio'] if premio_ativo else None,
                         "pontos_premio": premio_ativo['pontos_premio'] if premio_ativo else 0,
@@ -349,9 +356,13 @@ class DataManager:
         return self._executar_query(query, (nome_capitalizado, telefone, email, data_nascimento, sexo, cep, codigo))
 
     def enviar_emails_aniversariantes_do_dia(self):
+        # Implementar a lógica aqui
+        self.logger.info("(TAREFA AGENDADA) Verificando aniversariantes do dia...")
         pass
 
     def enviar_emails_clientes_inativos(self):
+        # Implementar a lógica aqui
+        self.logger.info("(TAREFA AGENDADA) Verificando clientes inativos...")
         pass
 
     def get_all_dashboard_data(self):
