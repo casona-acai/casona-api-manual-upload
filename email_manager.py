@@ -8,7 +8,6 @@ import config
 
 
 class EmailManager:
-    # ... (outras funções não mudam) ...
     def __init__(self):
         self.sender_email = config.SENDER_EMAIL
         self.password = config.SENDER_PASSWORD
@@ -53,24 +52,16 @@ class EmailManager:
         """
         self._send_email(recipient_email, subject, html_body)
 
-    # =========================================================================
-    # FUNÇÃO MODIFICADA
-    # =========================================================================
     def send_purchase_update_email(self, recipient_email, nome, resultado_compra: dict):
-        """
-        Envia um e-mail de atualização após cada compra, com mensagens dinâmicas.
-        """
         subject = "Atualização do seu Clube Fidelidade Casona Açaí!"
 
-        # Extrai todas as informações do dicionário
         pontos_nesta_compra = resultado_compra.get("pontos_nesta_compra", 0)
         compras_no_ciclo = resultado_compra.get("compras_no_ciclo", 0)
         pontos_acumulados = resultado_compra.get("pontos_acumulados", 0)
         premio_gerado_agora = resultado_compra.get("premio_gerado_nesta_compra", False)
-        codigo_premio_ativo = resultado_compra.get("codigo_premio_ativo")  # <--- A informação crucial
+        codigo_premio_ativo = resultado_compra.get("codigo_premio_ativo")
 
         mensagem_status = ""
-        # >>> ALTERAÇÃO PRINCIPAL AQUI <<<
         if premio_gerado_agora and codigo_premio_ativo:
             mensagem_status = f"""
             <p style="font-size: 18px; color: #8B008B; font-weight: bold;">
@@ -109,7 +100,6 @@ class EmailManager:
             <div style="max-width: 600px; margin: auto; border: 1px solid #ddd; padding: 20px; border-radius: 10px;">
                 <h2 style="color: #8B008B;">Olá, {nome}!</h2>
                 <p>Obrigado por sua compra! Seu extrato de pontos foi atualizado.</p>
-
                 <div style="background-color: #f2f2f2; padding: 15px; border-radius: 8px; text-align: center; margin: 20px 0;">
                     <p style="font-size: 16px; margin: 0 0 5px 0;">Pontos desta compra:</p>
                     <p style="font-size: 24px; font-weight: bold; color: #4CAF50; margin: 0 0 15px 0;">
@@ -121,9 +111,7 @@ class EmailManager:
                         {pontos_acumulados} pontos
                     </p>
                 </div>
-
                 {mensagem_status}
-
                 <p>Continue conosco para aproveitar ainda mais benefícios!</p>
                 <p>Atenciosamente,<br>Equipe Casona Açaí</p>
             </div>
@@ -132,13 +120,12 @@ class EmailManager:
         """
         self._send_email(recipient_email, subject, html_body)
 
-    # ... (outras funções não mudam) ...
-    def send_redemption_success_email(self, recipient_email, nome):
+    def send_redemption_success_email(self, recipient_email, nome, pontos_resgatados):
         subject = "Seu prêmio foi resgatado com sucesso!"
         html_body = f"""
         <html><body>
             <h2>Olá, {nome}!</h2>
-            <p>Confirmamos que seu prêmio foi resgatado com sucesso em nosso estabelecimento.</p>
+            <p>Confirmamos que seu prêmio de <strong>{pontos_resgatados} pontos</strong> foi resgatado com sucesso em nosso estabelecimento.</p>
             <p>Seu ciclo de compras foi reiniciado e você já pode começar a juntar pontos para o próximo prêmio. Esperamos te ver em breve!</p>
             <p>Obrigado por fazer parte do nosso clube de fidelidade!</p>
             <p>Atenciosamente,<br>Equipe Casona Açaí</p>

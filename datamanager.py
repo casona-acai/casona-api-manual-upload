@@ -69,8 +69,8 @@ class DataManager:
             '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS pontos_acumulados INTEGER NOT NULL DEFAULT 0;''',
             '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS compras_ciclo_atual INTEGER NOT NULL DEFAULT 0;''',
             '''ALTER TABLE compras ADD COLUMN IF NOT EXISTS pontos_gerados INTEGER NOT NULL DEFAULT 0;''',
-            # Altera a coluna 'data' para TIMESTAMP se ela já existir como DATE
             '''ALTER TABLE compras ALTER COLUMN data TYPE TIMESTAMP WITHOUT TIME ZONE USING data::timestamp;''',
+            '''ALTER TABLE compras ADD COLUMN IF NOT EXISTS usada_em_premio BOOLEAN NOT NULL DEFAULT FALSE;''',
             '''ALTER TABLE clientes DROP COLUMN IF EXISTS contagem_brinde;''',
             '''DROP TABLE IF EXISTS premios_ativos;''',
             '''CREATE TABLE IF NOT EXISTS premios_ativos (
@@ -108,6 +108,7 @@ class DataManager:
                 valor REAL NOT NULL, pontos_gerados INTEGER NOT NULL, 
                 data TIMESTAMP NOT NULL, 
                 loja_compra TEXT,
+                usada_em_premio BOOLEAN NOT NULL DEFAULT FALSE,
                 FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo) ON DELETE CASCADE
             )''',
             "CREATE SEQUENCE IF NOT EXISTS codigo_cliente_seq START 1;",
@@ -133,7 +134,8 @@ class DataManager:
 
     def _calcular_pontos_validos(self, codigo_cliente: str, cursor) -> int:
         data_limite = datetime.now() - timedelta(days=180)
-        query = "SELECT COALESCE(SUM(pontos_gerados), 0) as total_pontos FROM compras WHERE codigo_cliente = %s AND data >= %s"
+        # Calcula pontos apenas de compras não usadas em prêmios
+        query = "SELECT COALESCE(SUM(pontos_gerados), 0) as total_pontos FROM compras WHERE codigo_cliente = %s AND data >= %s AND usada_em_premio = FALSE"
         cursor.execute(query, (codigo_cliente, data_limite))
         resultado = cursor.fetchone()
         pontos_validos = resultado['total_pontos'] if resultado else 0
@@ -188,7 +190,7 @@ class DataManager:
                 if not cliente_data: return None
 
                 pontos_gerados = int(valor * 100)
-                data_atual = datetime.now()  # Salva data e hora
+                data_atual = datetime.now()
 
                 compras_ciclo_atual_novo = cliente_data['compras_ciclo_atual'] + 1
                 total_compras_geral = cliente_data['total_compras'] + 1
@@ -263,7 +265,7 @@ class DataManager:
 
                 data_limite = datetime.now() - timedelta(days=180)
                 cursor.execute(
-                    "SELECT valor, pontos_gerados, data, loja_compra FROM compras WHERE codigo_cliente = %s AND data >= %s ORDER BY data DESC",
+                    "SELECT valor, pontos_gerados, data, loja_compra FROM compras WHERE codigo_cliente = %s AND data >= %s AND usada_em_premio = FALSE ORDER BY data DESC",
                     (codigo, data_limite))
                 historico_compras_validas = cursor.fetchall()
 
@@ -313,18 +315,32 @@ class DataManager:
                 valor_resgatado = round(pontos_resgatados / 100, 2)
                 data_resgate_atual = datetime.now().date()
 
+                cursor.execute("SELECT nome, email FROM clientes WHERE codigo = %s", (codigo_cliente,))
+                cliente_data = cursor.fetchone()
+
+                cursor.execute(
+                    "UPDATE compras SET usada_em_premio = TRUE WHERE codigo_cliente = %s AND usada_em_premio = FALSE",
+                    (codigo_cliente,)
+                )
+
                 cursor.execute(
                     "INSERT INTO premios_resgatados (codigo_premio, codigo_cliente, pontos_resgatados, valor_resgatado, data_geracao, data_resgate, loja_resgate) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                     (codigo_premio, codigo_cliente, pontos_resgatados, valor_resgatado, premio_ativo['data_geracao'],
                      data_resgate_atual, loja_resgate))
 
                 cursor.execute("DELETE FROM premios_ativos WHERE codigo_premio = %s", (codigo_premio,))
-
                 cursor.execute("UPDATE clientes SET compras_ciclo_atual = 0 WHERE codigo = %s", (codigo_cliente,))
-
                 self._calcular_pontos_validos(codigo_cliente, cursor)
 
             conn.commit()
+
+            if cliente_data and cliente_data.get('email'):
+                threading.Thread(
+                    target=self.email_manager.send_redemption_success_email,
+                    args=(cliente_data['email'], cliente_data['nome'], pontos_resgatados),
+                    daemon=True
+                ).start()
+
             return True, f"Prêmio de {pontos_resgatados} pontos resgatado com sucesso!"
         except Exception as e:
             if conn: conn.rollback()
