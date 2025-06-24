@@ -1,4 +1,4 @@
-# datamanager.py (VERSÃO COM LOGS DE DEBUG)
+# datamanager.py (VERSÃO FINAL - COM CAMPO CEP)
 
 import psycopg2
 from psycopg2 import OperationalError, IntegrityError, extras
@@ -73,7 +73,10 @@ class DataManager:
     def _iniciar_banco_de_dados(self):
         comandos = [
             '''CREATE TABLE IF NOT EXISTS lojas (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, identificador TEXT UNIQUE NOT NULL, hashed_password TEXT NOT NULL, nome_loja TEXT, is_active BOOLEAN NOT NULL DEFAULT TRUE)''',
-            '''CREATE TABLE IF NOT EXISTS clientes (codigo TEXT PRIMARY KEY, nome TEXT NOT NULL, telefone TEXT, email TEXT, total_compras INTEGER, total_gasto REAL, contagem_brinde INTEGER, loja_origem TEXT, data_nascimento DATE, ano_ultimo_email_aniversario INTEGER, sexo TEXT)''',
+            # <<< ALTERADO: Adiciona a coluna cep TEXT >>>
+            '''CREATE TABLE IF NOT EXISTS clientes (codigo TEXT PRIMARY KEY, nome TEXT NOT NULL, telefone TEXT, email TEXT, cep TEXT, total_compras INTEGER, total_gasto REAL, contagem_brinde INTEGER, loja_origem TEXT, data_nascimento DATE, ano_ultimo_email_aniversario INTEGER, sexo TEXT)''',
+            # <<< NOVO: Comando para garantir compatibilidade com bancos de dados antigos >>>
+            '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS cep TEXT;''',
             '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS data_ultimo_email_inatividade DATE;''',
             '''CREATE TABLE IF NOT EXISTS compras (id SERIAL PRIMARY KEY, codigo_cliente TEXT NOT NULL, numero_compra_geral INTEGER NOT NULL, valor REAL NOT NULL, data DATE NOT NULL, loja_compra TEXT, FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo))''',
             '''CREATE TABLE IF NOT EXISTS premios_ativos (codigo_premio TEXT PRIMARY KEY, valor_premio REAL, codigo_cliente TEXT, data_geracao DATE, FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo))''',
@@ -104,7 +107,8 @@ class DataManager:
         query = "SELECT * FROM lojas WHERE identificador = %s"
         return self._executar_query(query, (identificador,), fetch='one', as_dict=True)
 
-    def cadastrar_cliente(self, nome, telefone, email, data_nascimento, sexo, loja_origem):
+    # <<< ALTERADO: Assinatura da função e query SQL para incluir o CEP >>>
+    def cadastrar_cliente(self, nome, telefone, email, data_nascimento, sexo, cep, loja_origem):
         nome_capitalizado = nome.strip().title()
         conn = None
         try:
@@ -112,9 +116,9 @@ class DataManager:
             with conn.cursor() as cursor:
                 cursor.execute("SELECT nextval('codigo_cliente_seq')")
                 novo_codigo = f"{cursor.fetchone()[0]:05d}"
-                query = "INSERT INTO clientes (codigo, nome, telefone, email, total_compras, total_gasto, contagem_brinde, loja_origem, data_nascimento, sexo) VALUES (%s, %s, %s, %s, 0, 0.0, 0, %s, %s, %s)"
-                cursor.execute(query,
-                               (novo_codigo, nome_capitalizado, telefone, email, loja_origem, data_nascimento, sexo))
+                query = "INSERT INTO clientes (codigo, nome, telefone, email, cep, total_compras, total_gasto, contagem_brinde, loja_origem, data_nascimento, sexo) VALUES (%s, %s, %s, %s, %s, 0, 0.0, 0, %s, %s, %s)"
+                cursor.execute(query, (
+                novo_codigo, nome_capitalizado, telefone, email, cep, loja_origem, data_nascimento, sexo))
             conn.commit()
 
             if email:
@@ -269,11 +273,11 @@ class DataManager:
             "SELECT codigo, nome, telefone, email FROM clientes WHERE nome ILIKE %s OR telefone LIKE %s OR email ILIKE %s OR codigo = %s ORDER BY nome LIMIT 50",
             (termo_like, termo_like, termo_like, termo), fetch='all', as_dict=True)
 
-    def atualizar_cliente(self, codigo, nome, telefone, email, data_nascimento, sexo):
+    # <<< ALTERADO: Assinatura da função e query SQL para incluir o CEP >>>
+    def atualizar_cliente(self, codigo, nome, telefone, email, data_nascimento, sexo, cep):
         nome_capitalizado = nome.strip().title()
-        return self._executar_query(
-            "UPDATE clientes SET nome = %s, telefone = %s, email = %s, data_nascimento = %s, sexo = %s WHERE codigo = %s",
-            (nome_capitalizado, telefone, email, data_nascimento, sexo, codigo))
+        query = "UPDATE clientes SET nome = %s, telefone = %s, email = %s, data_nascimento = %s, sexo = %s, cep = %s WHERE codigo = %s"
+        return self._executar_query(query, (nome_capitalizado, telefone, email, data_nascimento, sexo, cep, codigo))
 
     def enviar_emails_aniversariantes_do_dia(self):
         # Implementação completa aqui...
