@@ -1,10 +1,9 @@
-# datamanager.py (VERSÃO FINAL - COM CAMPO CEP)
+# datamanager.py
 
 import psycopg2
 from psycopg2 import OperationalError, IntegrityError, extras
 from psycopg2 import pool
-import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 import threading
 import logging
@@ -15,8 +14,7 @@ import config
 
 class DataManager:
     """
-    Classe que gerencia toda a lógica de banco de dados.
-    A instância desta classe é criada e gerenciada pelo main.py.
+    Classe que gerencia toda a lógica de banco de dados para o sistema de fidelidade por pontos.
     """
 
     def __init__(self):
@@ -44,7 +42,6 @@ class DataManager:
         self.connection_pool.putconn(conn)
 
     def close_pool(self):
-        """Fecha todas as conexões no pool."""
         if self.connection_pool:
             self.connection_pool.closeall()
             self.logger.info("Pool de conexões com o banco de dados fechado.")
@@ -71,33 +68,75 @@ class DataManager:
                 self._release_conexao(conn)
 
     def _iniciar_banco_de_dados(self):
-        comandos = [
+        comandos_migracao = [
+            '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS pontos_acumulados INTEGER NOT NULL DEFAULT 0;''',
+            '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS compras_ciclo_atual INTEGER NOT NULL DEFAULT 0;''',
+            '''ALTER TABLE clientes DROP COLUMN IF EXISTS contagem_brinde;''',
+            '''DROP TABLE IF EXISTS premios_ativos;''',
+            '''CREATE TABLE IF NOT EXISTS premios_ativos (
+                codigo_premio TEXT PRIMARY KEY,
+                codigo_cliente TEXT NOT NULL UNIQUE,
+                pontos_premio INTEGER NOT NULL,
+                data_geracao DATE NOT NULL,
+                data_ultima_atualizacao DATE NOT NULL,
+                FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo)
+            );''',
+            '''DROP TABLE IF EXISTS premios_resgatados;''',
+            '''CREATE TABLE IF NOT EXISTS premios_resgatados (
+                id SERIAL PRIMARY KEY,
+                codigo_premio TEXT,
+                codigo_cliente TEXT NOT NULL,
+                pontos_resgatados INTEGER NOT NULL,
+                valor_resgatado REAL NOT NULL,
+                data_geracao DATE,
+                data_resgate DATE NOT NULL,
+                loja_resgate TEXT
+            );'''
+        ]
+
+        comandos_estrutura = [
             '''CREATE TABLE IF NOT EXISTS lojas (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, identificador TEXT UNIQUE NOT NULL, hashed_password TEXT NOT NULL, nome_loja TEXT, is_active BOOLEAN NOT NULL DEFAULT TRUE)''',
-            # <<< ALTERADO: Adiciona a coluna cep TEXT >>>
-            '''CREATE TABLE IF NOT EXISTS clientes (codigo TEXT PRIMARY KEY, nome TEXT NOT NULL, telefone TEXT, email TEXT, cep TEXT, total_compras INTEGER, total_gasto REAL, contagem_brinde INTEGER, loja_origem TEXT, data_nascimento DATE, ano_ultimo_email_aniversario INTEGER, sexo TEXT)''',
-            # <<< NOVO: Comando para garantir compatibilidade com bancos de dados antigos >>>
-            '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS cep TEXT;''',
-            '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS data_ultimo_email_inatividade DATE;''',
-            '''CREATE TABLE IF NOT EXISTS compras (id SERIAL PRIMARY KEY, codigo_cliente TEXT NOT NULL, numero_compra_geral INTEGER NOT NULL, valor REAL NOT NULL, data DATE NOT NULL, loja_compra TEXT, FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo))''',
-            '''CREATE TABLE IF NOT EXISTS premios_ativos (codigo_premio TEXT PRIMARY KEY, valor_premio REAL, codigo_cliente TEXT, data_geracao DATE, FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo))''',
-            '''CREATE TABLE IF NOT EXISTS premios_resgatados (id SERIAL PRIMARY KEY, codigo_premio TEXT, valor_premio REAL, codigo_cliente TEXT, data_geracao DATE, data_resgate DATE, loja_resgate TEXT)''',
+            '''CREATE TABLE IF NOT EXISTS clientes (
+                codigo TEXT PRIMARY KEY, nome TEXT NOT NULL, telefone TEXT, email TEXT, cep TEXT, 
+                total_compras INTEGER NOT NULL DEFAULT 0, total_gasto REAL NOT NULL DEFAULT 0.0,
+                pontos_acumulados INTEGER NOT NULL DEFAULT 0, compras_ciclo_atual INTEGER NOT NULL DEFAULT 0,
+                loja_origem TEXT, data_nascimento DATE, ano_ultimo_email_aniversario INTEGER, sexo TEXT,
+                data_ultimo_email_inatividade DATE
+            )''',
+            '''CREATE TABLE IF NOT EXISTS compras (
+                id SERIAL PRIMARY KEY, codigo_cliente TEXT NOT NULL, numero_compra_geral INTEGER NOT NULL,
+                valor REAL NOT NULL, pontos_gerados INTEGER NOT NULL, data DATE NOT NULL, loja_compra TEXT,
+                FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo)
+            )''',
             "CREATE SEQUENCE IF NOT EXISTS codigo_cliente_seq START 1;",
-            "CREATE INDEX IF NOT EXISTS idx_lojas_username ON lojas (username);",
-            "CREATE INDEX IF NOT EXISTS idx_clientes_telefone ON clientes (telefone);",
-            "CREATE INDEX IF NOT EXISTS idx_clientes_email ON clientes (email);",
-            "CREATE INDEX IF NOT EXISTS idx_compras_codigo_cliente ON compras (codigo_cliente);",
-            "CREATE INDEX IF NOT EXISTS idx_premios_codigo_cliente ON premios_ativos (codigo_cliente);",
-            "CREATE INDEX IF NOT EXISTS idx_clientes_nascimento_mes_dia ON clientes (EXTRACT(MONTH FROM data_nascimento), EXTRACT(DAY FROM data_nascimento));",
             "CREATE EXTENSION IF NOT EXISTS pg_trgm;",
             "CREATE INDEX IF NOT EXISTS idx_clientes_nome_gin ON clientes USING GIN (nome gin_trgm_ops);"
         ]
-        for comando in comandos:
+
+        self.logger.info("Iniciando verificação e migração do banco de dados...")
+        for comando in comandos_migracao:
             try:
                 self._executar_query(comando)
             except Exception as e:
-                self.logger.warning(
-                    f"Não foi possível executar comando de inicialização: '{comando[:50]}...'. Erro: {e}.")
-        self.logger.info("Tabelas e índices do banco de dados verificados/criados.")
+                self.logger.warning(f"Comando de migração falhou (pode ser normal): '{comando[:50]}...'. Erro: {e}")
+
+        self.logger.info("Verificando estrutura principal do banco de dados...")
+        for comando in comandos_estrutura:
+            try:
+                self._executar_query(comando)
+            except Exception as e:
+                self.logger.warning(f"Comando de inicialização falhou: '{comando[:50]}...'. Erro: {e}.")
+
+        self.logger.info("Banco de dados pronto para operar com o sistema de pontos.")
+
+    def _calcular_pontos_validos(self, codigo_cliente: str, cursor) -> int:
+        data_limite = datetime.now().date() - timedelta(days=180)
+        query = "SELECT COALESCE(SUM(pontos_gerados), 0) as total_pontos FROM compras WHERE codigo_cliente = %s AND data >= %s"
+        cursor.execute(query, (codigo_cliente, data_limite))
+        resultado = cursor.fetchone()
+        pontos_validos = resultado['total_pontos'] if resultado else 0
+        cursor.execute("UPDATE clientes SET pontos_acumulados = %s WHERE codigo = %s", (pontos_validos, codigo_cliente))
+        return pontos_validos
 
     def obter_loja_por_username(self, username: str):
         query = "SELECT * FROM lojas WHERE username = %s"
@@ -107,7 +146,6 @@ class DataManager:
         query = "SELECT * FROM lojas WHERE identificador = %s"
         return self._executar_query(query, (identificador,), fetch='one', as_dict=True)
 
-    # <<< ALTERADO: Assinatura da função e query SQL para incluir o CEP >>>
     def cadastrar_cliente(self, nome, telefone, email, data_nascimento, sexo, cep, loja_origem):
         nome_capitalizado = nome.strip().title()
         conn = None
@@ -116,7 +154,10 @@ class DataManager:
             with conn.cursor() as cursor:
                 cursor.execute("SELECT nextval('codigo_cliente_seq')")
                 novo_codigo = f"{cursor.fetchone()[0]:05d}"
-                query = "INSERT INTO clientes (codigo, nome, telefone, email, cep, total_compras, total_gasto, contagem_brinde, loja_origem, data_nascimento, sexo) VALUES (%s, %s, %s, %s, %s, 0, 0.0, 0, %s, %s, %s)"
+                query = """
+                    INSERT INTO clientes (codigo, nome, telefone, email, cep, loja_origem, data_nascimento, sexo)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """
                 cursor.execute(query, (
                 novo_codigo, nome_capitalizado, telefone, email, cep, loja_origem, data_nascimento, sexo))
             conn.commit()
@@ -127,11 +168,9 @@ class DataManager:
             return novo_codigo
         except IntegrityError as e:
             if conn: conn.rollback()
-            self.logger.error(f"Erro de integridade ao cadastrar cliente '{nome_capitalizado}': {e}")
             raise Exception("Conflito ao cadastrar: Um cliente com dados semelhantes já pode existir.")
         except Exception as e:
             if conn: conn.rollback()
-            self.logger.error(f"Erro desconhecido ao cadastrar cliente: {e}")
             raise Exception(f"Não foi possível salvar cliente: {e}")
         finally:
             if conn: self._release_conexao(conn)
@@ -141,50 +180,60 @@ class DataManager:
         try:
             with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
                 cursor.execute(
-                    "SELECT nome, email, total_compras, total_gasto, contagem_brinde FROM clientes WHERE codigo = %s FOR UPDATE",
+                    "SELECT nome, email, total_compras, compras_ciclo_atual FROM clientes WHERE codigo = %s FOR UPDATE",
                     (codigo,))
                 cliente_data = cursor.fetchone()
-                if not cliente_data: return None, None, None, None
+                if not cliente_data: return None
 
-                total_compras_geral = cliente_data['total_compras'] + 1
-                total_gasto_geral = cliente_data['total_gasto'] + valor
-                contagem_brinde_nova = cliente_data['contagem_brinde'] + 1
+                pontos_gerados = int(valor * 100)
                 data_atual = datetime.now().date()
+                compras_ciclo_atual_novo = cliente_data['compras_ciclo_atual'] + 1
+                total_compras_geral = cliente_data['total_compras'] + 1
 
                 cursor.execute(
-                    "INSERT INTO compras (codigo_cliente, numero_compra_geral, valor, data, loja_compra) VALUES (%s, %s, %s, %s, %s)",
-                    (codigo, total_compras_geral, valor, data_atual, loja_compra))
-
-                ganhou_brinde = (contagem_brinde_nova == 10)
-                nova_contagem_final = 0 if ganhou_brinde else contagem_brinde_nova
-                media_premio, codigo_premio_gerado = 0.0, None
-
-                if ganhou_brinde:
-                    cursor.execute(
-                        "SELECT valor FROM compras WHERE codigo_cliente = %s ORDER BY numero_compra_geral DESC LIMIT 10",
-                        (codigo,))
-                    ultimas_compras = cursor.fetchall()
-                    media_premio = sum(item['valor'] for item in ultimas_compras) / 10 if ultimas_compras else 0.0
-                    codigo_premio_gerado = f"{random.randint(10000, 99999)}"
-                    cursor.execute(
-                        "INSERT INTO premios_ativos (codigo_premio, valor_premio, codigo_cliente, data_geracao) VALUES (%s, %s, %s, %s)",
-                        (codigo_premio_gerado, media_premio, codigo, data_atual))
+                    "INSERT INTO compras (codigo_cliente, numero_compra_geral, valor, pontos_gerados, data, loja_compra) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (codigo, total_compras_geral, valor, pontos_gerados, data_atual, loja_compra))
 
                 cursor.execute(
-                    "UPDATE clientes SET total_compras = %s, total_gasto = %s, contagem_brinde = %s WHERE codigo = %s",
-                    (total_compras_geral, total_gasto_geral, nova_contagem_final, codigo))
+                    "UPDATE clientes SET total_compras = total_compras + 1, total_gasto = total_gasto + %s, compras_ciclo_atual = %s WHERE codigo = %s",
+                    (valor, compras_ciclo_atual_novo, codigo))
+
+                pontos_totais_validos = self._calcular_pontos_validos(codigo, cursor)
+
+                codigo_premio_ativo = None
+                premio_gerado_agora = False
+                cursor.execute("SELECT codigo_premio FROM premios_ativos WHERE codigo_cliente = %s", (codigo,))
+                premio_ativo = cursor.fetchone()
+
+                if premio_ativo:
+                    codigo_premio_ativo = premio_ativo['codigo_premio']
+                    cursor.execute(
+                        "UPDATE premios_ativos SET pontos_premio = pontos_premio + %s, data_ultima_atualizacao = %s WHERE codigo_cliente = %s",
+                        (pontos_gerados, data_atual, codigo))
+                elif compras_ciclo_atual_novo >= 5 and pontos_totais_validos > 0:
+                    codigo_premio_ativo = f"{random.randint(10000, 99999)}"
+                    cursor.execute(
+                        "INSERT INTO premios_ativos (codigo_premio, codigo_cliente, pontos_premio, data_geracao, data_ultima_atualizacao) VALUES (%s, %s, %s, %s, %s)",
+                        (codigo_premio_ativo, codigo, pontos_totais_validos, data_atual, data_atual))
+                    premio_gerado_agora = True
+
             conn.commit()
 
+            resultado_compra = {
+                "compras_no_ciclo": compras_ciclo_atual_novo,
+                "pontos_acumulados": pontos_totais_validos,
+                "codigo_premio_ativo": codigo_premio_ativo,
+                "premio_gerado_nesta_compra": premio_gerado_agora
+            }
+
             if cliente_data['email']:
-                if ganhou_brinde:
-                    threading.Thread(target=self.email_manager.send_prize_won_email, args=(
-                    cliente_data['email'], cliente_data['nome'], codigo_premio_gerado, media_premio),
-                                     daemon=True).start()
-                else:
-                    threading.Thread(target=self.email_manager.send_purchase_update_email,
-                                     args=(cliente_data['email'], cliente_data['nome'], contagem_brinde_nova),
-                                     daemon=True).start()
-            return contagem_brinde_nova, ganhou_brinde, media_premio, codigo_premio_gerado
+                threading.Thread(
+                    target=self.email_manager.send_purchase_update_email,
+                    args=(cliente_data['email'], cliente_data['nome'], resultado_compra),
+                    daemon=True
+                ).start()
+
+            return resultado_compra
         except Exception as e:
             if conn: conn.rollback()
             self.logger.error(f"Falha na transação de registrar compra para o código {codigo}: {e}")
@@ -192,80 +241,91 @@ class DataManager:
         finally:
             if conn: self._release_conexao(conn)
 
+    def obter_status_fidelidade(self, codigo):
+        conn = self._get_conexao()
+        try:
+            with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
+                cursor.execute("SELECT * FROM clientes WHERE codigo = %s", (codigo,))
+                cliente_data = cursor.fetchone()
+                if not cliente_data: return None
+
+                pontos_validos = self._calcular_pontos_validos(codigo, cursor)
+                cliente_data['pontos_acumulados'] = pontos_validos
+
+                cursor.execute("SELECT codigo_premio, pontos_premio FROM premios_ativos WHERE codigo_cliente = %s",
+                               (codigo,))
+                premio_ativo = cursor.fetchone()
+
+                data_limite = datetime.now().date() - timedelta(days=180)
+                cursor.execute(
+                    "SELECT valor, pontos_gerados, data, loja_compra FROM compras WHERE codigo_cliente = %s AND data >= %s ORDER BY data DESC",
+                    (codigo, data_limite))
+                historico_compras_validas = cursor.fetchall()
+
+            conn.commit()
+
+            return {
+                "cliente": cliente_data,
+                "resumo_fidelidade": {
+                    "pontos_acumulados": pontos_validos,
+                    "compras_no_ciclo_atual": cliente_data['compras_ciclo_atual'],
+                    "habilitado_para_gerar_premio": cliente_data['compras_ciclo_atual'] >= 5,
+                    "premio_ativo": {
+                        "codigo_premio": premio_ativo['codigo_premio'] if premio_ativo else None,
+                        "pontos_premio": premio_ativo['pontos_premio'] if premio_ativo else 0,
+                        "valor_resgate": round(premio_ativo['pontos_premio'] / 100, 2) if premio_ativo else 0.0,
+                    }
+                },
+                "historico_compras_validas": historico_compras_validas
+            }
+        except Exception as e:
+            if conn: conn.rollback()
+            raise
+        finally:
+            if conn: self._release_conexao(conn)
+
+    def consultar_premio(self, codigo_premio):
+        query = """
+            SELECT pa.codigo_premio, pa.pontos_premio, pa.codigo_cliente, c.nome as nome_cliente
+            FROM premios_ativos pa JOIN clientes c ON pa.codigo_cliente = c.codigo
+            WHERE pa.codigo_premio = %s
+        """
+        premio = self._executar_query(query, (codigo_premio,), fetch='one', as_dict=True)
+        if premio:
+            premio['valor_resgate'] = round(premio['pontos_premio'] / 100, 2)
+        return premio
+
     def resgatar_premio(self, codigo_premio, loja_resgate):
         conn = self._get_conexao()
         try:
             with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
-                cursor.execute(
-                    "SELECT valor_premio, codigo_cliente, data_geracao FROM premios_ativos WHERE codigo_premio = %s FOR UPDATE",
-                    (codigo_premio,))
+                cursor.execute("SELECT * FROM premios_ativos WHERE codigo_premio = %s FOR UPDATE", (codigo_premio,))
                 premio_ativo = cursor.fetchone()
                 if not premio_ativo: return False, "Prêmio inválido ou já resgatado."
 
+                codigo_cliente = premio_ativo['codigo_cliente']
+                pontos_resgatados = premio_ativo['pontos_premio']
+                valor_resgatado = round(pontos_resgatados / 100, 2)
                 data_resgate_atual = datetime.now().date()
+
                 cursor.execute(
-                    "INSERT INTO premios_resgatados (codigo_premio, valor_premio, codigo_cliente, data_geracao, data_resgate, loja_resgate) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (codigo_premio, premio_ativo['valor_premio'], premio_ativo['codigo_cliente'],
-                     premio_ativo['data_geracao'], data_resgate_atual, loja_resgate))
+                    "INSERT INTO premios_resgatados (codigo_premio, codigo_cliente, pontos_resgatados, valor_resgatado, data_geracao, data_resgate, loja_resgate) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (codigo_premio, codigo_cliente, pontos_resgatados, valor_resgatado, premio_ativo['data_geracao'],
+                     data_resgate_atual, loja_resgate))
+
                 cursor.execute("DELETE FROM premios_ativos WHERE codigo_premio = %s", (codigo_premio,))
 
-                cursor.execute("SELECT nome, email FROM clientes WHERE codigo = %s", (premio_ativo['codigo_cliente'],))
-                cliente_info = cursor.fetchone()
-            conn.commit()
+                cursor.execute("UPDATE clientes SET compras_ciclo_atual = 0 WHERE codigo = %s", (codigo_cliente,))
 
-            if cliente_info and cliente_info['email']:
-                threading.Thread(target=self.email_manager.send_redemption_success_email,
-                                 args=(cliente_info['email'], cliente_info['nome']), daemon=True).start()
-            return True, "Prêmio resgatado com sucesso!"
+                self._calcular_pontos_validos(codigo_cliente, cursor)
+
+            conn.commit()
+            return True, f"Prêmio de R$ {valor_resgatado:.2f} resgatado com sucesso!"
         except Exception as e:
             if conn: conn.rollback()
-            self.logger.error(f"Falha na transação de resgate de prêmio {codigo_premio}: {e}")
             raise Exception(f"Falha ao resgatar prêmio: {e}")
         finally:
             if conn: self._release_conexao(conn)
-
-    def obter_historico_ciclo_atual(self, codigo):
-        self.logger.info(f"HISTORICO: Iniciando busca de histórico para o código: {codigo}")
-
-        resultado_cliente = self._executar_query(
-            "SELECT nome, total_compras, contagem_brinde FROM clientes WHERE codigo = %s", (codigo,), fetch='one',
-            as_dict=True)
-        if not resultado_cliente:
-            self.logger.warning(f"HISTORICO: Cliente com código {codigo} não encontrado.")
-            return None
-
-        self.logger.info(f"HISTORICO: Dados do cliente encontrados: {resultado_cliente}")
-
-        compras_neste_ciclo = 10 if resultado_cliente.get('contagem_brinde') == 0 and resultado_cliente.get(
-            'total_compras', 0) > 0 else resultado_cliente.get('contagem_brinde', 0)
-        self.logger.info(f"HISTORICO: Calculado para buscar as últimas {compras_neste_ciclo} compras.")
-
-        compras_db = self._executar_query(
-            "SELECT numero_compra_geral, valor, data, loja_compra FROM compras WHERE codigo_cliente = %s ORDER BY numero_compra_geral DESC LIMIT %s",
-            (codigo, compras_neste_ciclo), fetch='all', as_dict=True) or []
-        self.logger.info(f"HISTORICO: Compras encontradas no ciclo: {compras_db}")
-
-        premios_ativos = self._executar_query(
-            "SELECT codigo_premio, valor_premio FROM premios_ativos WHERE codigo_cliente = %s", (codigo,), fetch='all',
-            as_dict=True) or []
-        self.logger.info(f"HISTORICO: Prêmios ativos encontrados: {premios_ativos}")
-
-        resposta_final = {
-            **resultado_cliente,
-            "historico": list(reversed(compras_db)),
-            "premios_ativos": premios_ativos
-        }
-
-        self.logger.info(f"HISTORICO: Dicionário de resposta final a ser enviado: {resposta_final}")
-
-        return resposta_final
-
-    def buscar_cliente_por_codigo(self, codigo):
-        return self._executar_query("SELECT * FROM clientes WHERE codigo = %s", (codigo,), fetch='one', as_dict=True)
-
-    def consultar_premio(self, codigo_premio):
-        return self._executar_query("SELECT valor_premio FROM premios_ativos WHERE codigo_premio = %s",
-                                    (codigo_premio,), fetch='one', as_dict=True)
 
     def buscar_clientes_por_termo(self, termo):
         termo_like = f"%{termo}%"
@@ -273,88 +333,35 @@ class DataManager:
             "SELECT codigo, nome, telefone, email FROM clientes WHERE nome ILIKE %s OR telefone LIKE %s OR email ILIKE %s OR codigo = %s ORDER BY nome LIMIT 50",
             (termo_like, termo_like, termo_like, termo), fetch='all', as_dict=True)
 
-    # <<< ALTERADO: Assinatura da função e query SQL para incluir o CEP >>>
+    def buscar_cliente_por_codigo(self, codigo):
+        return self._executar_query("SELECT * FROM clientes WHERE codigo = %s", (codigo,), fetch='one', as_dict=True)
+
     def atualizar_cliente(self, codigo, nome, telefone, email, data_nascimento, sexo, cep):
         nome_capitalizado = nome.strip().title()
         query = "UPDATE clientes SET nome = %s, telefone = %s, email = %s, data_nascimento = %s, sexo = %s, cep = %s WHERE codigo = %s"
         return self._executar_query(query, (nome_capitalizado, telefone, email, data_nascimento, sexo, cep, codigo))
 
     def enviar_emails_aniversariantes_do_dia(self):
-        # Implementação completa aqui...
         pass
 
     def enviar_emails_clientes_inativos(self):
-        # Implementação completa aqui...
         pass
 
-        # --- NOVOS MÉTODOS PARA O DASHBOARD ---
-        def get_all_dashboard_data(self):
-            """Busca todos os dados necessários para o dashboard de uma só vez."""
-            conn = self._get_conexao()
-            try:
-                with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
-                    cursor.execute("SELECT * FROM clientes ORDER BY nome")
-                    clientes = cursor.fetchall()
-
-                    cursor.execute("SELECT * FROM compras")
-                    compras = cursor.fetchall()
-
-                    cursor.execute("SELECT * FROM premios_resgatados")
-                    premios_resgatados = cursor.fetchall()
-
-                return {
-                    "clientes": clientes,
-                    "compras": compras,
-                    "premios_resgatados": premios_resgatados
-                }
-            finally:
-                if conn:
-                    self._release_conexao(conn)
-
-        def get_all_lojas_from_db(self):
-            """Busca uma lista de todas as lojas únicas no sistema."""
-            query = """
-                SELECT DISTINCT loja FROM (
-                    SELECT loja_origem as loja FROM clientes WHERE loja_origem IS NOT NULL AND loja_origem != ''
-                    UNION
-                    SELECT loja_compra as loja FROM compras WHERE loja_compra IS NOT NULL AND loja_compra != ''
-                ) as lojas_unicas ORDER BY loja;
-            """
-            rows = self._executar_query(query, fetch='all')
-            return [row[0] for row in rows] if rows else []
-
     def get_all_dashboard_data(self):
-        """Busca todos os dados necessários para o dashboard de uma só vez."""
         conn = self._get_conexao()
         try:
             with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
-                self.logger.info("DASHBOARD: Buscando todos os clientes...")
                 cursor.execute("SELECT * FROM clientes ORDER BY nome")
                 clientes = cursor.fetchall()
-
-                self.logger.info("DASHBOARD: Buscando todas as compras...")
                 cursor.execute("SELECT * FROM compras")
                 compras = cursor.fetchall()
-
-                self.logger.info("DASHBOARD: Buscando todos os prêmios resgatados...")
                 cursor.execute("SELECT * FROM premios_resgatados")
                 premios_resgatados = cursor.fetchall()
-
-            self.logger.info("DASHBOARD: Dados coletados com sucesso.")
-            return {
-                "clientes": clientes,
-                "compras": compras,
-                "premios_resgatados": premios_resgatados
-            }
-        except Exception as e:
-            self.logger.error(f"DASHBOARD: Erro ao buscar dados agregados: {e}")
-            raise  # Lança o erro para a camada da API tratar
+            return {"clientes": clientes, "compras": compras, "premios_resgatados": premios_resgatados}
         finally:
-            if conn:
-                self._release_conexao(conn)
+            if conn: self._release_conexao(conn)
 
     def get_all_lojas_from_db(self):
-        """Busca uma lista de todas as lojas únicas no sistema."""
         query = """
             SELECT DISTINCT loja FROM (
                 SELECT loja_origem as loja FROM clientes WHERE loja_origem IS NOT NULL AND loja_origem != ''
@@ -364,12 +371,5 @@ class DataManager:
                 SELECT loja_resgate as loja FROM premios_resgatados WHERE loja_resgate IS NOT NULL AND loja_resgate != ''
             ) as lojas_unicas WHERE loja IS NOT NULL ORDER BY loja;
         """
-        try:
-            self.logger.info("DASHBOARD: Buscando lista de lojas...")
-            rows = self._executar_query(query, fetch='all')
-            lojas = [row[0] for row in rows] if rows else []
-            self.logger.info(f"DASHBOARD: Lojas encontradas: {lojas}")
-            return lojas
-        except Exception as e:
-            self.logger.error(f"DASHBOARD: Erro ao buscar lista de lojas: {e}")
-            raise
+        rows = self._executar_query(query, fetch='all')
+        return [row[0] for row in rows] if rows else []

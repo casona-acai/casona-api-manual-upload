@@ -1,4 +1,4 @@
-# main.py (VERSÃO 4.0.2 - CORREÇÃO FINAL NO ENDPOINT DE HISTÓRICO)
+# main.py
 
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +9,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
-from typing import List #
+from typing import List
 
 import auth
 import models
@@ -33,7 +33,6 @@ async def lifespan(app: FastAPI):
                       id="job_aniversariantes")
     scheduler.add_job(data_manager_instance.enviar_emails_clientes_inativos, 'cron', hour=11, minute=0,
                       id="job_clientes_inativos")
-
     scheduler.start()
     logger.info("Agendador de tarefas iniciado.")
 
@@ -47,7 +46,7 @@ async def lifespan(app: FastAPI):
 
 
 # --- CRIAÇÃO DA APLICAÇÃO FASTAPI COM O LIFESPAN ---
-app = FastAPI(title="Casona Fidelidade API", version="4.0.2-hotfix", lifespan=lifespan)
+app = FastAPI(title="Casona Fidelidade API", version="5.0.0-pontos", lifespan=lifespan)
 
 
 # --- DEPENDÊNCIA PARA OBTER O DATA MANAGER ---
@@ -69,8 +68,6 @@ async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none';"
     return response
 
 
@@ -78,33 +75,15 @@ async def add_security_headers(request: Request, call_next):
 scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
 
 
-# --- ENDPOINTS ---
-# --- NOVA DEPENDÊNCIA DE SEGURANÇA PARA O DASHBOARD ---
+# --- DEPENDÊNCIA DE SEGURANÇA PARA O DASHBOARD ---
 def get_admin_user(current_store: dict = Depends(auth.get_current_store)):
-    """Verifica se o usuário logado é o administrador."""
     if current_store.get("identificador") != "ADMIN":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso negado: Requer privilégios de administrador.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Acesso negado: Requer privilégios de administrador.")
     return current_store
 
-@app.get("/debug-historico/{codigo}", tags=["Debug"])
-def debug_obter_historico(
-    codigo: str,
-    current_store: dict = Depends(auth.get_current_store),
-    dm: DataManager = Depends(get_data_manager)
-):
-    """
-    Endpoint temporário para depurar a saída do histórico.
-    """
-    logger.info(f"DEBUG: Acessando endpoint de debug para o código {codigo}")
-    try:
-        historico_data = dm.obter_historico_ciclo_atual(codigo)
-        if not historico_data:
-            raise HTTPException(status_code=404, detail="Cliente não encontrado no debug.")
-        logger.info(f"DEBUG: Dados retornados: {historico_data}")
-        return historico_data
-    except Exception as e:
-        logger.error(f"DEBUG: Erro no endpoint de debug: {e}")
-        raise
+
+# --- ENDPOINTS ---
 
 @app.post("/token", summary="Autentica a loja e retorna um token de acesso", response_model=models.Token)
 @limiter.limit("5/minute")
@@ -124,16 +103,14 @@ def register_public_client(cliente_data: models.ClientePayload, request: Request
     if cliente_data.website:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ação suspeita detectada.")
     try:
-        codigo = dm.cadastrar_cliente(nome=cliente_data.nome, telefone=cliente_data.telefone, email=cliente_data.email,
-                                      data_nascimento=cliente_data.data_nascimento, sexo=cliente_data.sexo,
-                                      loja_origem="Cadastro Online")
+        codigo = dm.cadastrar_cliente(loja_origem="Cadastro Online", **cliente_data.dict(exclude={'website'}))
         return {"sucesso": True, "message": "Cadastro realizado com sucesso! Bem-vindo(a) ao Clube Casona!",
                 "codigo_gerado": codigo}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@app.post("/clientes", summary="Cadastra um novo cliente", status_code=status.HTTP_201_CREATED,
+@app.post("/clientes", summary="Cadastra um novo cliente (interno)", status_code=status.HTTP_201_CREATED,
           tags=["Interno - Lojas"])
 def criar_cliente(cliente_data: models.ClientePayload, current_store: dict = Depends(auth.get_current_store),
                   dm: DataManager = Depends(get_data_manager)):
@@ -148,81 +125,59 @@ def criar_cliente(cliente_data: models.ClientePayload, current_store: dict = Dep
 @app.get("/clientes/buscar", summary="Busca clientes por termo", tags=["Interno - Lojas"])
 def buscar_clientes(termo: str, current_store: dict = Depends(auth.get_current_store),
                     dm: DataManager = Depends(get_data_manager)):
-    try:
-        return dm.buscar_clientes_por_termo(termo)
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    return dm.buscar_clientes_por_termo(termo)
 
 
-@app.get("/clientes/{codigo}", summary="Busca um cliente pelo código", tags=["Interno - Lojas"])
+@app.get("/clientes/{codigo}", summary="Busca dados cadastrais de um cliente", tags=["Interno - Lojas"])
 def buscar_cliente_por_codigo(codigo: str, current_store: dict = Depends(auth.get_current_store),
                               dm: DataManager = Depends(get_data_manager)):
-    try:
-        cliente = dm.buscar_cliente_por_codigo(codigo)
-        if not cliente: raise HTTPException(status_code=404, detail="Cliente não encontrado.")
-        return cliente
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    cliente = dm.buscar_cliente_por_codigo(codigo)
+    if not cliente: raise HTTPException(status_code=404, detail="Cliente não encontrado.")
+    return cliente
 
 
 @app.put("/clientes/{codigo}", summary="Atualiza os dados de um cliente", tags=["Interno - Lojas"])
 def atualizar_cliente_endpoint(codigo: str, cliente_data: models.ClienteUpdatePayload,
                                current_store: dict = Depends(auth.get_current_store),
                                dm: DataManager = Depends(get_data_manager)):
-    try:
-        if dm.atualizar_cliente(codigo=codigo, **cliente_data.dict()):
-            return {"status": "sucesso", "message": "Cliente atualizado com sucesso."}
-        raise HTTPException(status_code=400, detail="Não foi possível atualizar o cliente.")
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    if dm.atualizar_cliente(codigo=codigo, **cliente_data.dict()):
+        return {"status": "sucesso", "message": "Cliente atualizado com sucesso."}
+    raise HTTPException(status_code=400, detail="Não foi possível atualizar o cliente.")
 
 
-@app.post("/compras", summary="Registra uma nova compra", tags=["Interno - Lojas"])
+@app.post("/compras", summary="Registra uma nova compra e atualiza os pontos", tags=["Interno - Lojas"])
 def adicionar_compra(compra_data: models.CompraPayload, current_store: dict = Depends(auth.get_current_store),
                      dm: DataManager = Depends(get_data_manager)):
     try:
-        contagem, ganhou, media, cod_premio = dm.registrar_compra(codigo=compra_data.codigo_cliente,
-                                                                  valor=compra_data.valor,
-                                                                  loja_compra=current_store["identificador"])
-        if contagem is None: raise HTTPException(status_code=404,
-                                                 detail=f"Cliente {compra_data.codigo_cliente} não encontrado.")
-        return {"contagem_atual": contagem, "ganhou_brinde": ganhou, "valor_premio": media, "codigo_premio": cod_premio}
+        resultado = dm.registrar_compra(codigo=compra_data.codigo_cliente, valor=compra_data.valor,
+                                        loja_compra=current_store["identificador"])
+        if resultado is None:
+            raise HTTPException(status_code=404, detail=f"Cliente {compra_data.codigo_cliente} não encontrado.")
+        return {"sucesso": True, "message": "Compra registrada com sucesso!", **resultado}
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/historico/{codigo}", summary="Obtém o histórico do ciclo de compras atual", tags=["Interno - Lojas"])
-def obter_historico(codigo: str, current_store: dict = Depends(auth.get_current_store),
-                    dm: DataManager = Depends(get_data_manager)):
-    try:
-        # <<< AQUI ESTÁ A CORREÇÃO FINAL E CORRETA >>>
-        # Chamando o método correto que monta o dicionário completo.
-        historico_data = dm.obter_historico_ciclo_atual(codigo)
-
-        if not historico_data:
-            raise HTTPException(status_code=404, detail="Cliente não encontrado.")
-
-        # Retorna o dicionário completo, que agora garantidamente contém a chave 'historico'.
-        return historico_data
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        logger.error(f"Erro ao obter histórico para o código {codigo}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+@app.get("/fidelidade/{codigo}", summary="Obtém o status de fidelidade e histórico de um cliente",
+         tags=["Interno - Lojas"])
+def obter_status_fidelidade_endpoint(codigo: str, current_store: dict = Depends(auth.get_current_store),
+                                     dm: DataManager = Depends(get_data_manager)):
+    status_data = dm.obter_status_fidelidade(codigo)
+    if not status_data:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado.")
+    return status_data
 
 
-@app.get("/premios/consultar/{codigo_premio}", summary="Consulta um prêmio ativo", tags=["Interno - Lojas"])
+@app.get("/premios/consultar/{codigo_premio}", summary="Consulta um prêmio ativo pelo código", tags=["Interno - Lojas"])
 def consultar_premio_endpoint(codigo_premio: str, current_store: dict = Depends(auth.get_current_store),
                               dm: DataManager = Depends(get_data_manager)):
-    try:
-        premio = dm.consultar_premio(codigo_premio)
-        if not premio: raise HTTPException(status_code=404, detail="Código de prêmio inválido ou já utilizado.")
-        return premio
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    premio = dm.consultar_premio(codigo_premio)
+    if not premio:
+        raise HTTPException(status_code=404, detail="Código de prêmio inválido ou já utilizado.")
+    return premio
 
 
-@app.post("/premios/resgatar/{codigo_premio}", summary="Resgata um prêmio", tags=["Interno - Lojas"])
+@app.post("/premios/resgatar/{codigo_premio}", summary="Resgata um prêmio usando o código", tags=["Interno - Lojas"])
 def resgatar_premio_endpoint(codigo_premio: str, current_store: dict = Depends(auth.get_current_store),
                              dm: DataManager = Depends(get_data_manager)):
     try:
@@ -231,28 +186,15 @@ def resgatar_premio_endpoint(codigo_premio: str, current_store: dict = Depends(a
             return {"status": "sucesso", "message": mensagem}
         raise HTTPException(status_code=400, detail=mensagem)
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        if isinstance(e, HTTPException): raise e
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/dashboard/data", response_model=models.DashboardDataResponse, tags=["Dashboard"])
-def get_dashboard_data(
-    admin: dict = Depends(get_admin_user),
-    dm: DataManager = Depends(get_data_manager)
-):
-    """Fornece todos os dados brutos para o dashboard."""
-    try:
-        return dm.get_all_dashboard_data()
-    except Exception as e:
-        logger.error(f"Erro ao buscar dados para o dashboard: {e}")
-        raise HTTPException(status_code=500, detail="Erro interno ao processar dados do dashboard.")
+def get_dashboard_data(admin: dict = Depends(get_admin_user), dm: DataManager = Depends(get_data_manager)):
+    return dm.get_all_dashboard_data()
+
 
 @app.get("/dashboard/lojas", response_model=List[str], tags=["Dashboard"])
-def get_dashboard_lojas(
-    admin: dict = Depends(get_admin_user),
-    dm: DataManager = Depends(get_data_manager)
-):
-    """Retorna uma lista de todas as lojas únicas."""
-    try:
-        return dm.get_all_lojas_from_db()
-    except Exception as e:
-        logger.error(f"Erro ao buscar lista de lojas para o dashboard: {e}")
-        raise HTTPException(status_code=500, detail="Erro interno ao buscar lojas.")
+def get_dashboard_lojas(admin: dict = Depends(get_admin_user), dm: DataManager = Depends(get_data_manager)):
+    return dm.get_all_lojas_from_db()
