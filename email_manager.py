@@ -8,6 +8,7 @@ import config
 
 
 class EmailManager:
+    # ... (outras funções não mudam) ...
     def __init__(self):
         self.sender_email = config.SENDER_EMAIL
         self.password = config.SENDER_PASSWORD
@@ -52,26 +53,37 @@ class EmailManager:
         """
         self._send_email(recipient_email, subject, html_body)
 
+    # =========================================================================
+    # FUNÇÃO MODIFICADA
+    # =========================================================================
     def send_purchase_update_email(self, recipient_email, nome, resultado_compra: dict):
         """
         Envia um e-mail de atualização após cada compra, com mensagens dinâmicas.
         """
         subject = "Atualização do seu Clube Fidelidade Casona Açaí!"
 
-        # Extrai as informações do dicionário
+        # Extrai todas as informações do dicionário
         pontos_nesta_compra = resultado_compra.get("pontos_nesta_compra", 0)
         compras_no_ciclo = resultado_compra.get("compras_no_ciclo", 0)
         pontos_acumulados = resultado_compra.get("pontos_acumulados", 0)
         premio_gerado_agora = resultado_compra.get("premio_gerado_nesta_compra", False)
+        codigo_premio_ativo = resultado_compra.get("codigo_premio_ativo")  # <--- A informação crucial
 
         mensagem_status = ""
-        if premio_gerado_agora:
-            mensagem_status = """
+        # >>> ALTERAÇÃO PRINCIPAL AQUI <<<
+        if premio_gerado_agora and codigo_premio_ativo:
+            mensagem_status = f"""
             <p style="font-size: 18px; color: #8B008B; font-weight: bold;">
-                Parabéns! Você atingiu a 5ª compra e seu código de prêmio foi gerado!
+                Parabéns! Você atingiu a 5ª compra e seu prêmio foi gerado!
             </p>
+            <div style="border: 2px dashed #8B008B; padding: 10px; margin: 15px 0; text-align: center;">
+                <p style="margin: 0; font-size: 16px;">Seu código para resgate é:</p>
+                <p style="margin: 5px 0 0 0; font-size: 24px; font-weight: bold; letter-spacing: 2px;">
+                    {codigo_premio_ativo}
+                </p>
+            </div>
             <p>
-                Você já pode usar seus pontos como desconto na sua próxima visita. 
+                Apresente este código no caixa para usar seus pontos como desconto.
                 Continue comprando para acumular ainda mais pontos no seu prêmio!
             </p>
             """
@@ -91,7 +103,6 @@ class EmailManager:
             </p>
             """
 
-        # Template HTML atualizado para mostrar os pontos da compra e o saldo total
         html_body = f"""
         <html>
         <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
@@ -121,6 +132,7 @@ class EmailManager:
         """
         self._send_email(recipient_email, subject, html_body)
 
+    # ... (outras funções não mudam) ...
     def send_redemption_success_email(self, recipient_email, nome):
         subject = "Seu prêmio foi resgatado com sucesso!"
         html_body = f"""
