@@ -78,6 +78,12 @@ scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
 
 
 # --- ENDPOINTS ---
+# --- NOVA DEPENDÊNCIA DE SEGURANÇA PARA O DASHBOARD ---
+def get_admin_user(current_store: dict = Depends(auth.get_current_store)):
+    """Verifica se o usuário logado é o administrador."""
+    if current_store.get("identificador") != "ADMIN":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso negado: Requer privilégios de administrador.")
+    return current_store
 
 @app.get("/debug-historico/{codigo}", tags=["Debug"])
 def debug_obter_historico(
@@ -225,3 +231,27 @@ def resgatar_premio_endpoint(codigo_premio: str, current_store: dict = Depends(a
         raise HTTPException(status_code=400, detail=mensagem)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@app.get("/dashboard/data", response_model=models.DashboardDataResponse, tags=["Dashboard"])
+def get_dashboard_data(
+    admin: dict = Depends(get_admin_user),
+    dm: DataManager = Depends(get_data_manager)
+):
+    """Fornece todos os dados brutos para o dashboard."""
+    try:
+        return dm.get_all_dashboard_data()
+    except Exception as e:
+        logger.error(f"Erro ao buscar dados para o dashboard: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno ao processar dados do dashboard.")
+
+@app.get("/dashboard/lojas", response_model=List[str], tags=["Dashboard"])
+def get_dashboard_lojas(
+    admin: dict = Depends(get_admin_user),
+    dm: DataManager = Depends(get_data_manager)
+):
+    """Retorna uma lista de todas as lojas únicas."""
+    try:
+        return dm.get_all_lojas_from_db()
+    except Exception as e:
+        logger.error(f"Erro ao buscar lista de lojas para o dashboard: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno ao buscar lojas.")

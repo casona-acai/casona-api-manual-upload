@@ -74,3 +74,27 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     store_id: str
+
+# --- NOVOS MODELOS PARA RESPOSTA DO DASHBOARD ---
+
+class CompraDashboard(BaseModel):
+    id: int
+    codigo_cliente: str
+    numero_compra_geral: int
+    valor: float
+    data: date
+    loja_compra: Optional[str] = None
+
+class PremioResgatadoDashboard(BaseModel):
+    id: int
+    codigo_premio: str
+    valor_premio: float
+    codigo_cliente: str
+    data_geracao: date
+    data_resgate: date
+    loja_resgate: Optional[str] = None
+
+class DashboardDataResponse(BaseModel):
+    clientes: List[ClienteResponse]
+    compras: List[CompraDashboard]
+    premios_resgatados: List[PremioResgatadoDashboard]

@@ -286,3 +286,39 @@ class DataManager:
     def enviar_emails_clientes_inativos(self):
         # Implementação completa aqui...
         pass
+
+        # --- NOVOS MÉTODOS PARA O DASHBOARD ---
+        def get_all_dashboard_data(self):
+            """Busca todos os dados necessários para o dashboard de uma só vez."""
+            conn = self._get_conexao()
+            try:
+                with conn.cursor(cursor_factory=extras.RealDictCursor) as cursor:
+                    cursor.execute("SELECT * FROM clientes ORDER BY nome")
+                    clientes = cursor.fetchall()
+
+                    cursor.execute("SELECT * FROM compras")
+                    compras = cursor.fetchall()
+
+                    cursor.execute("SELECT * FROM premios_resgatados")
+                    premios_resgatados = cursor.fetchall()
+
+                return {
+                    "clientes": clientes,
+                    "compras": compras,
+                    "premios_resgatados": premios_resgatados
+                }
+            finally:
+                if conn:
+                    self._release_conexao(conn)
+
+        def get_all_lojas_from_db(self):
+            """Busca uma lista de todas as lojas únicas no sistema."""
+            query = """
+                SELECT DISTINCT loja FROM (
+                    SELECT loja_origem as loja FROM clientes WHERE loja_origem IS NOT NULL AND loja_origem != ''
+                    UNION
+                    SELECT loja_compra as loja FROM compras WHERE loja_compra IS NOT NULL AND loja_compra != ''
+                ) as lojas_unicas ORDER BY loja;
+            """
+            rows = self._executar_query(query, fetch='all')
+            return [row[0] for row in rows] if rows else []
