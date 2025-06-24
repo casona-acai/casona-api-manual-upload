@@ -1,4 +1,4 @@
-# datamanager.py (VERSÃO FINAL - CLASSE SIMPLES PARA INJEÇÃO DE DEPENDÊNCIA)
+# datamanager.py (VERSÃO COM LOGS DE DEBUG)
 
 import psycopg2
 from psycopg2 import OperationalError, IntegrityError, extras
@@ -16,7 +16,7 @@ import config
 class DataManager:
     """
     Classe que gerencia toda a lógica de banco de dados.
-    A instância desta classe será criada e gerenciada pelo main.py.
+    A instância desta classe é criada e gerenciada pelo main.py.
     """
 
     def __init__(self):
@@ -38,18 +38,18 @@ class DataManager:
         self._iniciar_banco_de_dados()
 
     def _get_conexao(self):
-        """Pega uma conexão do pool."""
         return self.connection_pool.getconn()
 
     def _release_conexao(self, conn):
-        """Devolve uma conexão ao pool."""
         self.connection_pool.putconn(conn)
 
+    def close_pool(self):
+        """Fecha todas as conexões no pool."""
+        if self.connection_pool:
+            self.connection_pool.closeall()
+            self.logger.info("Pool de conexões com o banco de dados fechado.")
+
     def _executar_query(self, query, params=None, fetch=None, as_dict=False):
-        """
-        Executa uma query simples e autônoma.
-        IMPORTANTE: Não use para operações complexas que precisam de transação.
-        """
         conn = None
         try:
             conn = self._get_conexao()
@@ -221,8 +221,40 @@ class DataManager:
             if conn: self._release_conexao(conn)
 
     def obter_historico_ciclo_atual(self, codigo):
-        return self._executar_query("SELECT nome, total_compras, contagem_brinde FROM clientes WHERE codigo = %s",
-                                    (codigo,), fetch='one', as_dict=True)
+        self.logger.info(f"HISTORICO: Iniciando busca de histórico para o código: {codigo}")
+
+        resultado_cliente = self._executar_query(
+            "SELECT nome, total_compras, contagem_brinde FROM clientes WHERE codigo = %s", (codigo,), fetch='one',
+            as_dict=True)
+        if not resultado_cliente:
+            self.logger.warning(f"HISTORICO: Cliente com código {codigo} não encontrado.")
+            return None
+
+        self.logger.info(f"HISTORICO: Dados do cliente encontrados: {resultado_cliente}")
+
+        compras_neste_ciclo = 10 if resultado_cliente.get('contagem_brinde') == 0 and resultado_cliente.get(
+            'total_compras', 0) > 0 else resultado_cliente.get('contagem_brinde', 0)
+        self.logger.info(f"HISTORICO: Calculado para buscar as últimas {compras_neste_ciclo} compras.")
+
+        compras_db = self._executar_query(
+            "SELECT numero_compra_geral, valor, data, loja_compra FROM compras WHERE codigo_cliente = %s ORDER BY numero_compra_geral DESC LIMIT %s",
+            (codigo, compras_neste_ciclo), fetch='all', as_dict=True) or []
+        self.logger.info(f"HISTORICO: Compras encontradas no ciclo: {compras_db}")
+
+        premios_ativos = self._executar_query(
+            "SELECT codigo_premio, valor_premio FROM premios_ativos WHERE codigo_cliente = %s", (codigo,), fetch='all',
+            as_dict=True) or []
+        self.logger.info(f"HISTORICO: Prêmios ativos encontrados: {premios_ativos}")
+
+        resposta_final = {
+            **resultado_cliente,
+            "historico": list(reversed(compras_db)),
+            "premios_ativos": premios_ativos
+        }
+
+        self.logger.info(f"HISTORICO: Dicionário de resposta final a ser enviado: {resposta_final}")
+
+        return resposta_final
 
     def buscar_cliente_por_codigo(self, codigo):
         return self._executar_query("SELECT * FROM clientes WHERE codigo = %s", (codigo,), fetch='one', as_dict=True)
@@ -250,9 +282,3 @@ class DataManager:
     def enviar_emails_clientes_inativos(self):
         # Implementação completa aqui...
         pass
-
-    def close_pool(self):
-        """Fecha todas as conexões no pool."""
-        if self.connection_pool:
-            self.connection_pool.closeall()
-            self.logger.info("Pool de conexões com o banco de dados fechado.")
