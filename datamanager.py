@@ -1,4 +1,4 @@
-# datamanager.py
+# datamanager.py (VERSÃO MODIFICADA)
 
 import psycopg2
 from psycopg2 import OperationalError, IntegrityError, extras
@@ -17,7 +17,8 @@ class DataManager:
     Classe que gerencia toda a lógica de banco de dados para o sistema de fidelidade por pontos.
     """
 
-    def __init__(self):
+    # Adicionamos o parâmetro 'run_init' com valor padrão True
+    def __init__(self, run_init=True):
         self.logger = logging.getLogger(__name__)
         self.email_manager = email_manager.EmailManager()
         self.database_url = config.DATABASE_URL
@@ -33,8 +34,14 @@ class DataManager:
             self.logger.critical(f"Falha CRÍTICA ao criar o pool de conexões: {e}")
             raise
 
-        self._iniciar_banco_de_dados()
+        # A migração só será executada se 'run_init' for True.
+        # Por padrão, ao criar um `DataManager()`, ele tentará migrar.
+        # Mas podemos desabilitar isso com `DataManager(run_init=False)`.
+        if run_init:
+            self._iniciar_banco_de_dados()
 
+    # O resto do arquivo datamanager.py permanece EXATAMENTE O MESMO.
+    # ... (cole todo o restante do seu código de DataManager aqui) ...
     def _get_conexao(self):
         return self.connection_pool.getconn()
 

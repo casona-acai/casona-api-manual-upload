@@ -1,4 +1,4 @@
-# main.py
+# main.py (VERSÃO MODIFICADA E LIMPA)
 
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from apscheduler.schedulers.background import BackgroundScheduler
 import logging
 from typing import List
 
@@ -24,24 +23,18 @@ logger = logging.getLogger(__name__)
 # --- GERENCIADOR DE CICLO DE VIDA (LIFESPAN) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Iniciando a aplicação...")
-    data_manager_instance = DataManager()
+    logger.info("Iniciando a aplicação (worker)...")
+
+    # Criamos a instância do DataManager, mas informamos para NÃO rodar a migração.
+    # A migração agora é responsabilidade do script `migrate.py` no build.
+    data_manager_instance = DataManager(run_init=False)
     auth.set_data_manager(data_manager_instance)
     app.state.data_manager = data_manager_instance
 
-    scheduler.add_job(data_manager_instance.enviar_emails_aniversariantes_do_dia, 'cron', hour=8, minute=0,
-                      id="job_aniversariantes")
-    scheduler.add_job(data_manager_instance.enviar_emails_clientes_inativos, 'cron', hour=11, minute=0,
-                      id="job_clientes_inativos")
-    scheduler.start()
-    logger.info("Agendador de tarefas iniciado.")
-
     yield
 
-    logger.info("Encerrando a aplicação...")
-    if scheduler.running:
-        scheduler.shutdown()
-        logger.info("Agendador de tarefas encerrado.")
+    logger.info("Encerrando a aplicação (worker)...")
+    # Apenas fechamos o pool de conexões deste worker.
     app.state.data_manager.close_pool()
 
 
@@ -71,9 +64,9 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
-# --- INSTÂNCIA DO AGENDADOR DE TAREFAS ---
-scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
-
+#
+# >>> TODA A LÓGICA DO APSCHEDULER FOI REMOVIDA DESTE ARQUIVO <<<
+#
 
 # --- DEPENDÊNCIA DE SEGURANÇA PARA O DASHBOARD ---
 def get_admin_user(current_store: dict = Depends(auth.get_current_store)):
@@ -84,6 +77,8 @@ def get_admin_user(current_store: dict = Depends(auth.get_current_store)):
 
 
 # --- ENDPOINTS ---
+# O resto do arquivo main.py permanece EXATAMENTE O MESMO.
+# Cole todos os seus endpoints aqui, eles não precisam de nenhuma alteração.
 
 @app.post("/token", summary="Autentica a loja e retorna um token de acesso", response_model=models.Token)
 @limiter.limit("5/minute")
