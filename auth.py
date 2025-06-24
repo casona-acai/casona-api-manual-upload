@@ -1,4 +1,5 @@
-# auth.py
+# auth.py (VERSÃO FINAL - USANDO SINGLETON)
+
 from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -7,7 +8,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import logging
 
 import config
-from datamanager import DataManager
+# --- MODIFICAÇÃO PRINCIPAL: Importa a instância única do DataManager ---
+from datamanager import data_manager
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +21,9 @@ ACCESS_TOKEN_EXPIRE_HOURS = 12
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security_scheme = HTTPBearer()
 
-# --- INSTÂNCIA DO GERENCIADOR DE DADOS ---
-# Usamos uma única instância para otimizar o uso do pool de conexões
-db_manager = DataManager()
+
+# Não precisamos mais criar uma instância aqui, pois já importamos a global.
+# A variável 'data_manager' já está disponível para uso neste módulo.
 
 
 def verify_password(plain_password, hashed_password):
@@ -36,11 +38,11 @@ def get_password_hash(password):
 
 def authenticate_store(username: str, password: str):
     """
-    Autentica uma loja consultando o banco de dados.
+    Autentica uma loja consultando o banco de dados através da instância única do DataManager.
     Retorna os dados da loja se for bem-sucedido, senão None.
     """
     try:
-        loja = db_manager.obter_loja_por_username(username)
+        loja = data_manager.obter_loja_por_username(username)
         if not loja:
             logger.warning(f"Tentativa de login para usuário inexistente: {username}")
             return None
@@ -87,7 +89,7 @@ def get_current_store(credentials: HTTPAuthorizationCredentials = Depends(securi
 
     try:
         # Valida se o identificador do token corresponde a uma loja ativa no DB
-        loja_encontrada = db_manager.obter_loja_por_identificador(store_id)
+        loja_encontrada = data_manager.obter_loja_por_identificador(store_id)
         if not loja_encontrada or not loja_encontrada.get('is_active', False):
             raise credentials_exception
     except Exception as e:

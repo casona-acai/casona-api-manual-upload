@@ -1,4 +1,5 @@
-# main.py
+# main.py (VERSÃO FINAL - USANDO SINGLETON)
+
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
@@ -11,7 +12,8 @@ import logging
 
 import auth
 import models
-from datamanager import DataManager
+# --- MODIFICAÇÃO PRINCIPAL: Importa a instância única do DataManager ---
+from datamanager import data_manager
 from logging_config import setup_logging
 
 # --- CONFIGURAÇÃO DO LOGGING ---
@@ -20,12 +22,10 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIGURAÇÃO DA API E SEGURANÇA ---
 limiter = Limiter(key_func=get_remote_address)
-# Atualizando a versão para refletir a nova arquitetura de autenticação
-app = FastAPI(title="Casona Fidelidade API", version="3.0.0-db-auth")
+app = FastAPI(title="Casona Fidelidade API", version="3.1.0-singleton")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# --- CONFIGURAÇÃO DE CORS ---
 origins = [
     "https://monumental-chaja-fb2a91.netlify.app",
     "http://127.0.0.1:5500",
@@ -41,7 +41,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- MIDDLEWARE DE CABEÇALHOS DE SEGURANÇA ---
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -51,10 +50,9 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none';"
     return response
 
-# --- INICIALIZAÇÃO DO GERENCIADOR DE DADOS PARA OS ENDPOINTS ---
-# <<< ESTA LINHA É IMPORTANTE E DEVE PERMANECER >>>
-# Os endpoints definidos neste arquivo precisam desta instância para interagir com o banco.
-data_manager = DataManager()
+# A instância do DataManager já foi importada e está pronta para uso.
+# Não é necessário criar uma nova instância aqui.
+# A linha `app.dependency_overrides` também não é mais necessária para o DataManager.
 
 
 # --- AGENDADOR DE TAREFAS ---
@@ -73,25 +71,20 @@ scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
 
-# --- ENDPOINTS DE AUTENTICAÇÃO E UTILITÁRIOS ---
+# --- ENDPOINTS ---
 @app.post("/token", summary="Autentica a loja e retorna um token de acesso", response_model=models.Token)
 @limiter.limit("5/minute")
-def login_for_access_token(
-    request: Request,  # <<< ADICIONE ESTE PARÂMETRO AQUI
-    form_data: OAuth2PasswordRequestForm = Depends()
-):
+def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     loja = auth.authenticate_store(form_data.username, form_data.password)
     if not loja:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuário ou senha da loja incorretos"
         )
-    # O identificador da loja vem do banco de dados.
     access_token = auth.create_access_token(data={"sub": loja["identificador"]})
     logger.info(f"Login bem-sucedido para a loja: {loja['identificador']}")
     return {"access_token": access_token, "token_type": "bearer", "store_id": loja["identificador"]}
 
-# --- ENDPOINTS PÚBLICOS ---
 @app.post(
     "/public/register",
     summary="Permite que um cliente se cadastre via formulário online",
@@ -120,13 +113,11 @@ def register_public_client(cliente_data: models.ClientePayload, request: Request
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-# --- ENDPOINTS INTERNOS (PARA LOJAS AUTENTICADAS) ---
 @app.post("/clientes", summary="Cadastra um novo cliente (Requer Autenticação)", status_code=status.HTTP_201_CREATED,
           tags=["Interno - Lojas"])
 def criar_cliente(cliente_data: models.ClientePayload, current_store: dict = Depends(auth.get_current_store)):
     try:
-        codigo = data_manager.cadastrar_cliente(loja_origem=current_store["identificador"],
-                                                **cliente_data.dict(exclude={'website'}))
+        codigo = data_manager.cadastrar_cliente(loja_origem=current_store["identificador"], **cliente_data.dict(exclude={'website'}))
         return {"status": "sucesso", "message": "Cliente cadastrado com sucesso!", "codigo_gerado": codigo}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -167,11 +158,8 @@ def atualizar_cliente_endpoint(codigo: str, cliente_data: models.ClienteUpdatePa
 @app.post("/compras", summary="Registra uma nova compra para um cliente", tags=["Interno - Lojas"])
 def adicionar_compra(compra_data: models.CompraPayload, current_store: dict = Depends(auth.get_current_store)):
     try:
-        contagem, ganhou, media, cod_premio = data_manager.registrar_compra(codigo=compra_data.codigo_cliente,
-                                                                            valor=compra_data.valor,
-                                                                            loja_compra=current_store["identificador"])
-        if contagem is None: raise HTTPException(status_code=404,
-                                                 detail=f"Cliente {compra_data.codigo_cliente} não encontrado.")
+        contagem, ganhou, media, cod_premio = data_manager.registrar_compra(codigo=compra_data.codigo_cliente, valor=compra_data.valor, loja_compra=current_store["identificador"])
+        if contagem is None: raise HTTPException(status_code=404, detail=f"Cliente {compra_data.codigo_cliente} não encontrado.")
         return {"contagem_atual": contagem, "ganhou_brinde": ganhou, "valor_premio": media, "codigo_premio": cod_premio}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
