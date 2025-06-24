@@ -250,3 +250,9 @@ class DataManager:
     def enviar_emails_clientes_inativos(self):
         # Implementação completa aqui...
         pass
+
+    def close_pool(self):
+        """Fecha todas as conexões no pool."""
+        if self.connection_pool:
+            self.connection_pool.closeall()
+            self.logger.info("Pool de conexões com o banco de dados fechado.")
