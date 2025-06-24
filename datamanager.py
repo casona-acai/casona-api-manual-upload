@@ -13,10 +13,6 @@ import config
 
 
 class DataManager:
-    """
-    Classe que gerencia toda a lógica de banco de dados para o sistema de fidelidade por pontos.
-    """
-
     def __init__(self, run_init=True):
         self.logger = logging.getLogger(__name__)
         self.email_manager = email_manager.EmailManager()
@@ -73,6 +69,8 @@ class DataManager:
             '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS pontos_acumulados INTEGER NOT NULL DEFAULT 0;''',
             '''ALTER TABLE clientes ADD COLUMN IF NOT EXISTS compras_ciclo_atual INTEGER NOT NULL DEFAULT 0;''',
             '''ALTER TABLE compras ADD COLUMN IF NOT EXISTS pontos_gerados INTEGER NOT NULL DEFAULT 0;''',
+            # Altera a coluna 'data' para TIMESTAMP se ela já existir como DATE
+            '''ALTER TABLE compras ALTER COLUMN data TYPE TIMESTAMP WITHOUT TIME ZONE USING data::timestamp;''',
             '''ALTER TABLE clientes DROP COLUMN IF EXISTS contagem_brinde;''',
             '''DROP TABLE IF EXISTS premios_ativos;''',
             '''CREATE TABLE IF NOT EXISTS premios_ativos (
@@ -80,7 +78,7 @@ class DataManager:
                 codigo_cliente TEXT NOT NULL UNIQUE,
                 pontos_premio INTEGER NOT NULL,
                 data_geracao DATE NOT NULL,
-                data_ultima_atualizacao DATE NOT NULL,
+                data_ultima_atualizacao TIMESTAMP NOT NULL,
                 FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo) ON DELETE CASCADE
             );''',
             '''DROP TABLE IF EXISTS premios_resgatados;''',
@@ -107,7 +105,9 @@ class DataManager:
             )''',
             '''CREATE TABLE IF NOT EXISTS compras (
                 id SERIAL PRIMARY KEY, codigo_cliente TEXT NOT NULL, numero_compra_geral INTEGER NOT NULL,
-                valor REAL NOT NULL, pontos_gerados INTEGER NOT NULL, data DATE NOT NULL, loja_compra TEXT,
+                valor REAL NOT NULL, pontos_gerados INTEGER NOT NULL, 
+                data TIMESTAMP NOT NULL, 
+                loja_compra TEXT,
                 FOREIGN KEY (codigo_cliente) REFERENCES clientes (codigo) ON DELETE CASCADE
             )''',
             "CREATE SEQUENCE IF NOT EXISTS codigo_cliente_seq START 1;",
@@ -129,10 +129,10 @@ class DataManager:
             except Exception as e:
                 self.logger.warning(f"Comando de inicialização falhou: '{comando[:50]}...'. Erro: {e}.")
 
-        self.logger.info("Banco de dados pronto para operar com o sistema de pontos.")
+        self.logger.info("Banco de dados pronto para operar.")
 
     def _calcular_pontos_validos(self, codigo_cliente: str, cursor) -> int:
-        data_limite = datetime.now().date() - timedelta(days=180)
+        data_limite = datetime.now() - timedelta(days=180)
         query = "SELECT COALESCE(SUM(pontos_gerados), 0) as total_pontos FROM compras WHERE codigo_cliente = %s AND data >= %s"
         cursor.execute(query, (codigo_cliente, data_limite))
         resultado = cursor.fetchone()
@@ -188,7 +188,7 @@ class DataManager:
                 if not cliente_data: return None
 
                 pontos_gerados = int(valor * 100)
-                data_atual = datetime.now().date()
+                data_atual = datetime.now()  # Salva data e hora
 
                 compras_ciclo_atual_novo = cliente_data['compras_ciclo_atual'] + 1
                 total_compras_geral = cliente_data['total_compras'] + 1
@@ -215,14 +215,14 @@ class DataManager:
                         (pontos_gerados, data_atual, codigo))
                 elif compras_ciclo_atual_novo >= 5 and pontos_totais_validos > 0:
                     codigo_premio_ativo = f"{random.randint(10000, 99999)}"
+                    data_geracao_premio = datetime.now().date()
                     cursor.execute(
                         "INSERT INTO premios_ativos (codigo_premio, codigo_cliente, pontos_premio, data_geracao, data_ultima_atualizacao) VALUES (%s, %s, %s, %s, %s)",
-                        (codigo_premio_ativo, codigo, pontos_totais_validos, data_atual, data_atual))
+                        (codigo_premio_ativo, codigo, pontos_totais_validos, data_geracao_premio, data_atual))
                     premio_gerado_agora = True
 
             conn.commit()
 
-            # Adicionamos os pontos gerados nesta compra ao resultado que será enviado por e-mail
             resultado_compra = {
                 "pontos_nesta_compra": pontos_gerados,
                 "compras_no_ciclo": compras_ciclo_atual_novo,
@@ -261,7 +261,7 @@ class DataManager:
                                (codigo,))
                 premio_ativo = cursor.fetchone()
 
-                data_limite = datetime.now().date() - timedelta(days=180)
+                data_limite = datetime.now() - timedelta(days=180)
                 cursor.execute(
                     "SELECT valor, pontos_gerados, data, loja_compra FROM compras WHERE codigo_cliente = %s AND data >= %s ORDER BY data DESC",
                     (codigo, data_limite))
@@ -325,7 +325,7 @@ class DataManager:
                 self._calcular_pontos_validos(codigo_cliente, cursor)
 
             conn.commit()
-            return True, f"Prêmio de R$ {valor_resgatado:.2f} resgatado com sucesso!"
+            return True, f"Prêmio de {pontos_resgatados} pontos resgatado com sucesso!"
         except Exception as e:
             if conn: conn.rollback()
             raise Exception(f"Falha ao resgatar prêmio: {e}")
