@@ -29,10 +29,6 @@ class ClienteUpdatePayload(ClientePayload):
 # --- Modelos de Resposta (Saída) ---
 
 class ClienteResponse(BaseModel):
-    """
-    Modelo de dados para retornar as informações de um cliente
-    para as interfaces.
-    """
     codigo: str
     nome: str
     telefone: Optional[str] = None
@@ -40,12 +36,7 @@ class ClienteResponse(BaseModel):
     cep: Optional[str] = None
     total_compras: int
     total_gasto: float
-
-    # <<< ALTERAÇÃO AQUI >>>
-    # Trocamos 'contagem_brinde' por 'compras_ciclo_atual' para corresponder
-    # ao schema atual do banco de dados.
     compras_ciclo_atual: int
-
     loja_origem: str
     data_nascimento: Optional[date] = None
     ano_ultimo_email_aniversario: Optional[int] = None
@@ -68,14 +59,17 @@ class CompraDashboard(BaseModel):
     codigo_cliente: str
     numero_compra_geral: int
     valor: float
-    data: date  # Este campo espera um 'date', não 'datetime'.
+    data: date
     loja_compra: Optional[str] = None
 
 
 class PremioResgatadoDashboard(BaseModel):
     id: int
     codigo_premio: str
-    valor_premio: float  # Mantemos a correção anterior.
+    valor_premio: float
+    # <<< CORREÇÃO CRÍTICA APLICADA AQUI >>>
+    pontos_resgatados: int # Adicionado este campo que faltava
+    # <<< FIM DA CORREÇÃO >>>
     codigo_cliente: str
     data_geracao: date
     data_resgate: date
